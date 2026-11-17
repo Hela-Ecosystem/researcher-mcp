@@ -4,6 +4,7 @@
  * This module provides utilities to extract and export server schemas
  * in various formats for client consumption.
  */
+import { SERVER_VERSION } from "./version.js";
 
 export interface ToolSchema {
   name: string;
@@ -31,7 +32,7 @@ export function getServerSchema(): ServerSchema {
   return {
     serverInfo: {
       name: "wikipedia-mcp-server",
-      version: "4.0.3",
+      version: SERVER_VERSION,
       description: "An enterprise-grade Wikipedia server providing comprehensive Wikipedia access via the Model Context Protocol (MCP) standard"
     },
     tools: [

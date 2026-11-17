@@ -1,5 +1,6 @@
 import * as dotenv from 'dotenv';
 import { z } from 'zod';
+import { SERVER_VERSION } from './version.js';
 
 dotenv.config();
 
@@ -18,7 +19,7 @@ const envSchema = z.object({
 
   // Server Configuration
   SERVER_NAME: z.string().default('combined-mcp-server'),
-  SERVER_VERSION: z.string().default('4.0.3'),
+  SERVER_VERSION: z.string().default(SERVER_VERSION),
 
   // General Configuration
   PORT: z.coerce.number().default(3000),

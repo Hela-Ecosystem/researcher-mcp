@@ -1,3 +1,8 @@
+## [4.0.4] - 2026-11-18
+
+### Fixed
+- Centralize the advertised MCP server version and guard it against package.json drift.
+
 ## [4.0.3] - 2026-11-18
 
 ### Fixed

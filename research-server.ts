@@ -28,6 +28,7 @@ import {
   runWikipediaSearch,
   type WikipediaToolDeps,
 } from './src/wikipediaTools.js';
+import { SERVER_VERSION } from './src/version.js';
 
 // Research Prompt Definitions - Rich Library for Research Workflows
 export const researchPrompts: Prompt[] = [
@@ -1089,7 +1090,7 @@ export default class ResearchMCPServer {
     this.server = new Server(
       {
         name: config.server.name,
-                        version: '4.0.3',
+                        version: SERVER_VERSION,
       },
       {
         capabilities: {

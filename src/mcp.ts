@@ -5,6 +5,7 @@ import { EnhancedWikipediaService } from "./wikipediaService.js";
 import { WikipediaExtendedFeatures } from "./additionalFeatures.js";
 import { searchProvenance, pageProvenance, summaryProvenance, formatSourcesFooter } from "./provenance.js";
 import { registerEnvTool } from "./envelope.js";
+import { SERVER_VERSION } from "./version.js";
 
 export function createWikipediaMcp(
   wikipediaService: EnhancedWikipediaService,
@@ -19,7 +20,7 @@ export function createWikipediaMcp(
 
   const server = new McpServer({
     name: "wikipedia-mcp-server",
-    version: "4.0.3",
+    version: SERVER_VERSION,
   });
 
   registerEnvTool(server,
