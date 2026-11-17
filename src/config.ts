@@ -18,7 +18,7 @@ const envSchema = z.object({
 
   // Server Configuration
   SERVER_NAME: z.string().default('combined-mcp-server'),
-  SERVER_VERSION: z.string().default('4.0.2'),
+  SERVER_VERSION: z.string().default('4.0.3'),
 
   // General Configuration
   PORT: z.coerce.number().default(3000),

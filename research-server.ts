@@ -1089,7 +1089,7 @@ export default class ResearchMCPServer {
     this.server = new Server(
       {
         name: config.server.name,
-                        version: '4.0.2',
+                        version: '4.0.3',
       },
       {
         capabilities: {
@@ -8950,6 +8950,12 @@ Develop and execute a strategic research networking approach to build valuable c
           case 'multi_site_search': {
             const { query: multiQuery, sites: multiSites, maxResults: multiMaxRaw = 3, fileType: multiFileType } = args as any;
             const multiMax = clampInt(multiMaxRaw, 3, 1, 5);
+            if (!Array.isArray(multiSites) || multiSites.length === 0) {
+              return {
+                isError: true,
+                content: [{ type: 'text', text: 'multi_site_search requires at least one site, e.g. ["docs.python.org"]. The Google wrapper falls back to keyless engines automatically.' }],
+              };
+            }
             try {
               const siteSearch = multiSites.join(' OR site:');
               const result = await this.googleSearch.search({
@@ -8969,6 +8975,7 @@ Develop and execute a strategic research networking approach to build valuable c
               };
             } catch (error) {
               return {
+                isError: true,
                 content: [{ type: 'text', text: `Multi-site search failed: ${error instanceof Error ? error.message : 'Unknown error'}` }],
               };
             }

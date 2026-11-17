@@ -1,3 +1,12 @@
+## [4.0.3] - 2026-11-18
+
+### Fixed
+- `multi_site_search` without `sites` crashed into a success-shaped result (`Cannot read properties of undefined (reading 'join')`); it now returns a real error naming the missing argument, and the failure path sets `isError`.
+- Advertised version aligned with `package.json` in the server, config and schema metadata.
+
+### Added
+- `npm run test:fallback` proves the degradation chain against the live network: zero keys uses keyless engines, an invalid Google key swallows the CSE 400 and still returns results, and misuse of `multi_site_search` is an error.
+
 # Changelog
 
 ## [4.0.2] - 2026-11-18
