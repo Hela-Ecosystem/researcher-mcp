@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.0.2] - 2026-11-18
+
+### Fixed
+- Fail with a clear Node.js version message before loading dependencies that require the global `File` constructor.
+
 ## [4.0.1] - 2026-11-13
 
 ### Fixed

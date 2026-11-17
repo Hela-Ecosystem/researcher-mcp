@@ -1,7 +1,8 @@
-import SimpleResearchMCPServer from './research-server.js';
-
 async function main() {
   try {
+    const { assertSupportedRuntime } = await import('./src/runtimeGuard.js');
+    assertSupportedRuntime();
+    const { default: SimpleResearchMCPServer } = await import('./research-server.js');
     const server = new SimpleResearchMCPServer();
     await server.run();
   } catch (error) {
