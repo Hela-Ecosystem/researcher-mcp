@@ -18,6 +18,7 @@
  * constant here, change it there in the same commit.
  */
 
+import { existsSync } from "fs";
 import { homedir } from "os";
 import { isAbsolute, join, resolve } from "path";
 import { classifyQuery, type QueryClass, type QueryRouting, type SearchSource } from "./searchQuality.js";
@@ -81,7 +82,16 @@ export interface LearnedRouting extends QueryRouting {
 export function resolveGenomeDbPath(env: NodeJS.ProcessEnv = process.env): string {
   const configured = env.GUARDIAN_CENTRAL_DB;
   if (configured && isAbsolute(configured)) return resolve(configured);
-  return join(env.HOME || homedir(), "memory", "memory.db");
+  const home = env.HOME || homedir();
+  const preferred = join(home, "memory", "memory.db");
+  // Genome moves a legacy ~/memory.db into ~/memory/memory.db, but keeps using the
+  // legacy file when that migration could not run on the host. Follow the same
+  // rule: reading only the preferred path silently returns "no priors" forever on
+  // a machine that is still on the legacy store.
+  if (existsSync(preferred)) return preferred;
+  const legacy = join(home, "memory.db");
+  if (existsSync(legacy)) return legacy;
+  return preferred;
 }
 
 /**

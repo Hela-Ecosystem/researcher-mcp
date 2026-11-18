@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { DatabaseSync } from "node:sqlite";
@@ -65,6 +65,28 @@ describe("resolveGenomeDbPath", () => {
   it("defaults to ~/memory/memory.db", () => {
     expect(resolveGenomeDbPath({ HOME: "/home/tester" } as NodeJS.ProcessEnv))
       .toBe("/home/tester/memory/memory.db");
+  });
+
+  it("follows genome to the legacy ~/memory.db when the migrated path is absent", () => {
+    const home = mkdtempSync(join(tmpdir(), "enzyme-home-legacy-"));
+    try {
+      writeFileSync(join(home, "memory.db"), "");
+      expect(resolveGenomeDbPath({ HOME: home } as NodeJS.ProcessEnv)).toBe(join(home, "memory.db"));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers ~/memory/memory.db when both the migrated and legacy files exist", () => {
+    const home = mkdtempSync(join(tmpdir(), "enzyme-home-both-"));
+    try {
+      writeFileSync(join(home, "memory.db"), "");
+      mkdirSync(join(home, "memory"), { recursive: true });
+      writeFileSync(join(home, "memory", "memory.db"), "");
+      expect(resolveGenomeDbPath({ HOME: home } as NodeJS.ProcessEnv)).toBe(join(home, "memory", "memory.db"));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

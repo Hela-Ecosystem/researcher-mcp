@@ -1,3 +1,7 @@
+## [4.0.8] - 2026-11-19
+
+### Fixed
+- Learned priors never applied on a host still using genome's legacy store. Enzyme resolved `~/memory/memory.db` only, while genome keeps using `~/memory.db` when its migration did not run, so every brief reported `priors: static` and wrote nothing anywhere. Resolution now follows genome: the migrated path when it exists, otherwise the legacy file. Two tests cover both layouts, and a live run confirms `priors: learned (10 samples)` with the rows landing in the file genome actually writes.
 ## [4.0.7] - 2026-11-19
 
 ### Added

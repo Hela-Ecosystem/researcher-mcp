@@ -1,1 +1,1 @@
-export const SERVER_VERSION = "4.0.7"
+export const SERVER_VERSION = "4.0.8"
