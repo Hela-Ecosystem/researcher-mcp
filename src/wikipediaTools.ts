@@ -1,3 +1,5 @@
+import { formatScore, scoreSearchResult, WIKIPEDIA_RELEVANCE_FLOOR } from './searchQuality.js';
+
 export type WikipediaFormat = 'summary' | 'full';
 
 export interface ToolTextResult {
@@ -410,9 +412,12 @@ export async function runWikipediaSearch(
   if (plan.mode === 'query') {
     try {
       const payload = await deps.search(plan.query, { lang: plan.lang, limit: plan.limit });
-      const results = payload?.query?.search || [];
+      const results = (payload?.query?.search || [])
+        .map((result: any) => ({ ...result, score: scoreSearchResult(plan.query, result.title, cleanSnippet(result.snippet)) }))
+        .filter((result: any) => result.score >= WIKIPEDIA_RELEVANCE_FLOOR)
+        .sort((a: any, b: any) => b.score - a.score);
       const body = results
-        .map((result: any) => `- **${result.title}**: ${cleanSnippet(result.snippet)}`)
+        .map((result: any) => `- **${result.title}** (score: ${formatScore(result.score)}): ${cleanSnippet(result.snippet)}`)
         .join('\n');
       return textResult(`Found ${results.length} Wikipedia results for "${plan.query}":\n\n${body}`);
     } catch (error) {

@@ -3,10 +3,11 @@ import { z } from "zod";
 import { EnhancedWikipediaService } from "./wikipediaService.js";
 import { WikipediaExtendedFeatures } from "./additionalFeatures.js";
 import { GoogleSearchService } from "./googleSearchService.js";
-import { freeSearch, freeExtract, listFreeEngines } from "./freeSearchService.js";
+import { freeSearch, freeExtract, listFreeEngines, arxivSearch, googleNewsSearch } from "./freeSearchService.js";
 import { createWikipediaMcp } from "./mcp.js";
 import { registerEnvTool, withEnvelope } from "./envelope.js";
 import { googleSearchInput } from "./googleSearchTools.js";
+import { classifyQuery, formatScore, GOOGLE_RELEVANCE_FLOOR, scoreSearchResult, weightedScore, WIKIPEDIA_RELEVANCE_FLOOR } from "./searchQuality.js";
 import {
   searchProvenance,
   wikipediaSearchUrl,
@@ -23,10 +24,13 @@ function googleSource(query: string): SourceProvenance {
   };
 }
 
-function formatGoogleItems(items: Array<{ title: string; link: string; snippet: string }>): string {
-  if (!items || items.length === 0) return "No results.";
-  return items
-    .map((r, i) => `${i + 1}. ${r.title}\n   ${r.link}\n   ${r.snippet ?? ""}`)
+function formatGoogleItems(items: Array<{ title: string; link: string; snippet: string }>, query: string, multiplier = 1): string {
+  const ranked = (items ?? []).map((r) => ({ ...r, score: weightedScore(scoreSearchResult(query, r.title, r.snippet ?? ""), multiplier) }))
+    .filter((r) => r.score >= GOOGLE_RELEVANCE_FLOOR)
+    .sort((a, b) => b.score - a.score);
+  if (!ranked.length) return "No results.";
+  return ranked
+    .map((r, i) => `${i + 1}. ${r.title} (score: ${formatScore(r.score)})\n   ${r.link}\n   ${r.snippet ?? ""}`)
     .join("\n");
 }
 
@@ -209,7 +213,7 @@ export function createCombinedMcp(
         googleSource(args.query),
         searchProvenance(args.query),
       ]);
-      return withEnvelope("google_search", { content: [{ type: "text", text: `${formatGoogleItems(items)}\n\n${footer}` }] });
+      return withEnvelope("google_search", { content: [{ type: "text", text: `${formatGoogleItems(items, args.query)}\n\n${footer}` }] });
     }
   );
 
@@ -218,24 +222,32 @@ export function createCombinedMcp(
     "academic_search",
     {
       title: "Academic Search",
-      description: "Search academic sources (arXiv, Scholar, ResearchGate).",
+      description: "Search academic papers. arXiv answers first with its publication date enforced; Google Scholar and ResearchGate are used when arXiv has no match.",
       inputSchema: {
         query: z.string().describe("The research query."),
         sites: z.array(z.string()).optional().describe("Academic sites to restrict to."),
         maxResults: z.number().min(1).max(10).optional().describe("Max results."),
+        dateRange: z.enum(["d1", "d7", "m1", "m6", "y1", "y2"]).optional().default("y1").describe("Publication date range, enforced on arXiv and passed to Google as a restriction."),
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async (args) => {
+      const papers = await arxivSearch(args.query, args.maxResults ?? 5, args.dateRange ?? "y1");
+      if (papers.length) {
+        return papers.map((paper, index) =>
+          `${index + 1}. ${paper.title} (score: ${formatScore(scoreSearchResult(args.query, paper.title, paper.summary))}; ${paper.published.slice(0, 10)})\n   ${paper.link}\n   ${paper.summary.slice(0, 300)}`
+        ).join("\n\n");
+      }
       const data = await google.searchAcademic(args.query, {
         sites: args.sites,
         maxResults: args.maxResults ?? 5,
+        dateRange: args.dateRange,
       });
       const footer = formatSourcesFooter([
         googleSource(args.query),
         searchProvenance(args.query),
       ]);
-      return `${formatGoogleItems(data.items ?? [])}\n\n${footer}`;
+      return `${formatGoogleItems(data.items ?? [], args.query)}\n\n${footer}`;
     }
   );
 
@@ -261,7 +273,7 @@ export function createCombinedMcp(
         googleSource(args.topic),
         searchProvenance(args.topic),
       ]);
-      return `${formatGoogleItems(data.items ?? [])}\n\n${footer}`;
+      return `${formatGoogleItems(data.items ?? [], args.topic)}\n\n${footer}`;
     }
   );
 
@@ -286,7 +298,8 @@ export function createCombinedMcp(
         googleSource(`site:${args.sites.join(" OR site:")} ${args.query}`),
         searchProvenance(args.query),
       ]);
-      return `${formatGoogleItems(data.items ?? [])}\n\n${footer}`;
+      const routing = classifyQuery(args.query);
+      return `${formatGoogleItems(data.items ?? [], args.query, routing.multipliers.google)}\n\n${footer}`;
     }
   );
 
@@ -340,21 +353,31 @@ export function createCombinedMcp(
     async (args) => {
       const n = args.maxResults ?? 5;
       const lang = args.lang ?? "en";
-      const [g, w] = await Promise.all([
+      const routing = classifyQuery(args.query);
+      const [g, w, academic, news] = await Promise.all([
         google.search({ q: args.query, num: n }),
         wikipediaService.search(args.query, { limit: n, lang }),
+        routing.queryClass === "academic" ? arxivSearch(args.query, n, "y1") : Promise.resolve([]),
+        routing.queryClass === "news" ? googleNewsSearch(args.query, { maxResults: n }) : Promise.resolve([]),
       ]);
       const gItems: Array<{ title: string; link: string; snippet: string }> = g.items ?? [];
       const seen = new Set(gItems.map((r) => r.link));
       const wikiUrl = (title: string) =>
         `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
-      const wItems: Array<{ title: string; link: string; snippet: string }> = (w ?? [])
+      const wItems: Array<{ title: string; link: string; snippet: string; score: number }> = (w ?? [])
         .filter((p: any) => !seen.has(wikiUrl(p.title ?? "")))
-        .map((p: any) => ({
-          title: p.title ?? "",
-          link: wikiUrl(p.title ?? ""),
-          snippet: p.snippet ?? p.description ?? "",
-        }));
+        .map((p: any) => {
+          const title = p.title ?? "";
+          const snippet = p.snippet ?? p.description ?? "";
+          return {
+            title,
+            link: wikiUrl(title),
+            snippet,
+            score: weightedScore(scoreSearchResult(args.query, title, snippet), routing.multipliers.wikipedia),
+          };
+        })
+        .filter((p: { score: number }) => p.score >= WIKIPEDIA_RELEVANCE_FLOOR)
+        .sort((a: { score: number }, b: { score: number }) => b.score - a.score);
       const footer = formatSourcesFooter([
         googleSource(args.query),
         searchProvenance(args.query, lang),
@@ -369,10 +392,12 @@ export function createCombinedMcp(
         `# Research brief: ${args.query}`,
         ``,
         `## Google`,
-        formatGoogleItems(gItems),
+        formatGoogleItems(gItems, args.query, routing.multipliers.google),
         ``,
         `## Wikipedia`,
-        formatGoogleItems(wItems),
+        wItems.length ? wItems.map((p, i) => `${i + 1}. ${p.title} (score: ${formatScore(p.score)})\n   ${p.link}\n   ${p.snippet}`).join("\n") : "No results.",
+        ...(academic.length ? ["", "## Academic Search", ...academic.map((p, i) => `${i + 1}. ${p.title} (score: ${formatScore(weightedScore(scoreSearchResult(args.query, p.title, p.summary), routing.multipliers.academic_search))}; ${p.published.slice(0, 10)})\n   ${p.link}`)] : []),
+        ...(news.length ? ["", "## News Monitor", ...news.map((p, i) => `${i + 1}. ${p.title} (score: ${formatScore(weightedScore(scoreSearchResult(args.query, p.title, p.snippet ?? ""), routing.multipliers.news_monitor))})\n   ${p.link}`)] : []),
         ``,
         footer,
       ].join("\n");

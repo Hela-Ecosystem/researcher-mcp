@@ -337,10 +337,35 @@ describe('runWikipediaSearch', () => {
       ),
     });
     const text = (await runWikipediaSearch({ query: 'black hole', limit: 2 }, deps)).content[0].text;
-    expect(text).toContain('Found 2 Wikipedia results for "black hole"');
-    expect(text).toContain('**Black hole**: Black hole snippet');
-    expect(text).toContain('**Event horizon**: No snippet available');
+    expect(text).toContain('Found 1 Wikipedia results for "black hole"');
+    expect(text).toContain('**Black hole** (score: 1.00): Black hole snippet');
+    expect(text).not.toContain('Event horizon');
     expect(deps.search).toHaveBeenCalledWith('black hole', { lang: 'en', limit: 2 });
+  });
+
+  test('drops long-query OR scatter while retaining a precise short-query page', async () => {
+    const pages = [
+      { title: 'Smalltalk', snippet: 'A programming language with many tools.' },
+      { title: 'XML', snippet: 'A markup language used to describe documents.' },
+      { title: 'Black hole', snippet: 'A region of spacetime with gravity so strong that nothing escapes.' },
+    ];
+    const deps = makeDeps({ search: jest.fn().mockResolvedValue(searchPayload(pages)) });
+    const scatter = (await runWikipediaSearch({ query: 'Model Context Protocol tool namespacing collisions' }, deps)).content[0].text;
+    expect(scatter).toContain('Found 0 Wikipedia results');
+    const precise = (await runWikipediaSearch({ query: 'black hole' }, deps)).content[0].text;
+    expect(precise).toContain('**Black hole** (score: 1.00)');
+    expect(precise.indexOf('score:')).toBeGreaterThan(-1);
+  });
+
+  test('prints scores in descending relevance order', async () => {
+    const deps = makeDeps({ search: jest.fn().mockResolvedValue(searchPayload([
+      { title: 'Black hole', snippet: 'Black holes are astronomical objects.' },
+      { title: 'Hole', snippet: 'A black hole is a region.' },
+    ])) });
+    const text = (await runWikipediaSearch({ query: 'black hole' }, deps)).content[0].text;
+    expect(text.indexOf('**Black hole**')).toBeLessThan(text.indexOf('**Hole**'));
+    expect(text.match(/score: 1\.00/g)).toHaveLength(1);
+    expect(text).toContain('score: 0.93');
   });
 
   test('summarises batch searches and isolates failures', async () => {

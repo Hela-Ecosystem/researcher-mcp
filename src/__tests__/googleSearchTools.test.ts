@@ -29,7 +29,7 @@ describe.each(factories)('%s google_search contract', (_name, factory) => {
   let search: SearchMock;
 
   beforeEach(async () => {
-    search = jest.fn<Promise<SearchResult>, [{ q: string; num?: number }]>().mockResolvedValue({ items: [{ title: 'Result', link: 'https://example.test/', snippet: 'Offline fixture' }] });
+    search = jest.fn<Promise<SearchResult>, [{ q: string; num?: number }]>().mockResolvedValue({ items: [{ title: 'Black holes result', link: 'https://example.test/', snippet: 'Black holes. Offline fixture' }] });
     server = factory(search);
     client = new Client({ name: 'enzyme-contract-test', version: '1.0.0' });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

@@ -1,0 +1,71 @@
+export const GOOGLE_RELEVANCE_FLOOR = 0.16;
+// Wikipedia search OR-matches terms, so its floor is higher to suppress cheap term scatter.
+export const WIKIPEDIA_RELEVANCE_FLOOR = 0.4;
+const EXACT_PHRASE_BONUS = 0.2;
+const STOPWORDS = new Set([
+  "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in",
+  "is", "it", "of", "on", "or", "that", "the", "this", "to", "what", "when", "where",
+  "which", "who", "why", "with",
+]);
+
+export function queryTerms(query: string): string[] {
+  return [...new Set((query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])
+    .filter((term) => term.length > 2 && !STOPWORDS.has(term)))];
+}
+
+export function scoreSearchResult(query: string, title = "", snippet = ""): number {
+  const terms = queryTerms(query);
+  if (!terms.length) return 0;
+  const titleText = title.toLowerCase();
+  const snippetText = snippet.toLowerCase();
+  const coverage = terms.reduce((sum, term) => {
+    if (titleText.includes(term)) return sum + 1;
+    if (snippetText.includes(term)) return sum + 0.45;
+    return sum;
+  }, 0) / terms.length;
+  const phrase = query.trim().length > 2 &&
+    `${title} ${snippet}`.toLowerCase().includes(query.trim().toLowerCase());
+  return Math.min(1, coverage + (phrase ? EXACT_PHRASE_BONUS : 0));
+}
+
+export type QueryClass = "news" | "academic" | "technical" | "definition" | "entity" | "general";
+export type SearchSource = "google" | "wikipedia" | "news_monitor" | "academic_search";
+export interface QueryRouting {
+  queryClass: QueryClass;
+  multipliers: Record<SearchSource, number>;
+}
+
+export function classifyQuery(query: string): QueryRouting {
+  const text = query.trim();
+  const lower = text.toLowerCase();
+  let queryClass: QueryClass = "general";
+  let multipliers: Record<SearchSource, number> = {
+    google: 1, wikipedia: 1, news_monitor: 0.65, academic_search: 0.65,
+  };
+
+  if (/\b(latest|release|released|announced|announcement|breaking|today)\b/i.test(text)) {
+    queryClass = "news";
+    multipliers = { google: 0.75, wikipedia: 0.4, news_monitor: 1.5, academic_search: 0.5 };
+  } else if (/\b(benchmark|evaluation|survey|method|methodology)\b/i.test(text)) {
+    queryClass = "academic";
+    multipliers = { google: 0.75, wikipedia: 0.45, news_monitor: 0.4, academic_search: 1.5 };
+  } else if (/\b\d+\.\d+(?:\.\d+)?\b|\b[a-z][a-z0-9]*_[a-z0-9_]+\b|\b(?:api|protocol|sdk|mcp|http|grpc)\b/i.test(text)) {
+    queryClass = "technical";
+    multipliers = { google: 1.4, wikipedia: 0.45, news_monitor: 0.5, academic_search: 0.8 };
+  } else if (/^\s*what\s+is\b/i.test(text)) {
+    queryClass = "definition";
+    multipliers = { google: 0.8, wikipedia: 1.5, news_monitor: 0.4, academic_search: 0.55 };
+  } else if (/(?:^|\s)[A-Z][\p{L}\p{N}'-]*(?:\s+[A-Z][\p{L}\p{N}'-]*)+/u.test(text)) {
+    queryClass = "entity";
+    multipliers = { google: 0.8, wikipedia: 1.35, news_monitor: 0.6, academic_search: 0.6 };
+  }
+  return { queryClass, multipliers };
+}
+
+export function weightedScore(score: number, multiplier: number): number {
+  return Math.min(1, score * multiplier);
+}
+
+export function formatScore(score: number): string {
+  return score.toFixed(2);
+}

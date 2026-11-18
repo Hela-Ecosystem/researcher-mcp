@@ -6,6 +6,7 @@ import { WikipediaExtendedFeatures } from "./additionalFeatures.js";
 import { searchProvenance, pageProvenance, summaryProvenance, formatSourcesFooter } from "./provenance.js";
 import { registerEnvTool } from "./envelope.js";
 import { SERVER_VERSION } from "./version.js";
+import { formatScore, scoreSearchResult, WIKIPEDIA_RELEVANCE_FLOOR } from "./searchQuality.js";
 
 export function createWikipediaMcp(
   wikipediaService: EnhancedWikipediaService,
@@ -54,7 +55,10 @@ export function createWikipediaMcp(
     },
     async ({ query, lang, limit, offset, includeSnippets }) => {
       const results = await wikipediaService.search(query, { lang, limit, offset, includeSnippets });
-      const searchResults = results?.query?.search || [];
+      const searchResults = (results?.query?.search || [])
+        .map((result: any) => ({ ...result, score: scoreSearchResult(query, result.title, result.snippet || "") }))
+        .filter((result: any) => result.score >= WIKIPEDIA_RELEVANCE_FLOOR)
+        .sort((a: any, b: any) => b.score - a.score);
       // C2: every search hit carries its canonical page URI as provenance.
       // Hits are ranking-level evidence (0.85), not full parses (0.95).
       const footer = formatSourcesFooter([
@@ -65,7 +69,7 @@ export function createWikipediaMcp(
         content: [
           {
             type: "text",
-            text: `Found ${searchResults.length} results for "${query}":\n\n${searchResults.map((result: any) => `- ${result.title}: ${result.snippet || 'No snippet available'}`).join('\n')}${footer}`,
+            text: `Found ${searchResults.length} results for "${query}":\n\n${searchResults.map((result: any) => `- ${result.title} (score: ${formatScore(result.score)}): ${result.snippet || 'No snippet available'}`).join('\n')}${footer}`,
           },
         ],
       };

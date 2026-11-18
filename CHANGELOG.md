@@ -1,12 +1,22 @@
-## [4.0.4] - 2026-11-18
+## [4.0.6] - 2026-11-19
 
 ### Fixed
-- Centralize the advertised MCP server version and guard it against package.json drift.
+- Score and filter search results by query relevance, with a stricter floor for Wikipedia's OR-matched results.
+- Apply inexpensive query-class routing priors in research briefs and multi-site search, and show ranked scores in search output.
+- Enforce academic arXiv publication date ranges before returning papers.
+
+### Added
+- Regression tests for relevance filtering, score ordering, source routing and arXiv date filtering.
 
 ## [4.0.5] - 2026-11-19
 
 ### Changed
 - npm audit fix clears two moderate advisories; search behaviour unchanged.
+
+## [4.0.4] - 2026-11-18
+
+### Fixed
+- Centralize the advertised MCP server version and guard it against package.json drift.
 
 ## [4.0.3] - 2026-11-18
 

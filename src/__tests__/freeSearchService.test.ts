@@ -99,6 +99,20 @@ describe("freeSearchService", () => {
     expect(papers[0].category).toBe("cs.AI");
   });
 
+  test("arxivSearch excludes papers outside the requested fixed date window", async () => {
+    const fixture = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry><id>https://arxiv.org/abs/2110.00001</id><title>Old transformer paper</title><summary>Transformer methods.</summary><published>2021-10-30T00:00:00Z</published></entry>
+  <entry><id>https://arxiv.org/abs/2401.00002</id><title>Recent transformer paper</title><summary>Transformer methods.</summary><published>2024-01-02T00:00:00Z</published></entry>
+</feed>`;
+    mockedAxios.get.mockResolvedValue({ data: fixture });
+    const papers = await arxivSearch("transformer", 10, "y2", new Date("2025-01-01T00:00:00Z"));
+    expect(papers.map((paper) => paper.title)).toEqual(["Recent transformer paper"]);
+    expect(mockedAxios.get).toHaveBeenCalledWith("https://export.arxiv.org/api/query", expect.objectContaining({
+      params: expect.objectContaining({ search_query: expect.stringContaining("submittedDate:[20230102 TO 20250101]") }),
+    }));
+  });
+
   test("googleNewsSearch parses RSS feed", async () => {
     const mockRss = `<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0">

@@ -225,13 +225,29 @@ export async function freeExtract(url: string): Promise<{
  */
 export async function arxivSearch(
   query: string,
-  maxResults = 5
+  maxResults = 5,
+  dateRange?: string,
+  now = new Date()
 ): Promise<ArxivPaper[]> {
+  const durationMs: Record<string, number> = {
+    d1: 1 * 24 * 60 * 60 * 1000,
+    d7: 7 * 24 * 60 * 60 * 1000,
+    m1: 30 * 24 * 60 * 60 * 1000,
+    m6: 183 * 24 * 60 * 60 * 1000,
+    y1: 365 * 24 * 60 * 60 * 1000,
+    y2: 2 * 365 * 24 * 60 * 60 * 1000,
+  };
+  const rangeMs = dateRange ? durationMs[dateRange] : undefined;
+  if (dateRange && !rangeMs) throw new Error(`Unsupported arXiv date range: ${dateRange}`);
+  const cutoff = rangeMs ? now.getTime() - rangeMs : undefined;
+  const arxivQuery = cutoff === undefined
+    ? `all:${query}`
+    : `all:${query} AND submittedDate:[${new Date(cutoff).toISOString().slice(0, 10).replace(/-/g, "")} TO ${now.toISOString().slice(0, 10).replace(/-/g, "")}]`;
   try {
     const url = "https://export.arxiv.org/api/query";
     const res = await axios.get<string>(url, {
       params: {
-        search_query: `all:${query}`,
+        search_query: arxivQuery,
         start: 0,
         max_results: maxResults,
       },
@@ -261,7 +277,12 @@ export async function arxivSearch(
         papers.push({ title, link, summary, authors, published, category });
       }
     });
-    return papers;
+    if (!dateRange) return papers;
+    if (cutoff === undefined) return papers;
+    return papers.filter((paper) => {
+      const publishedAt = Date.parse(paper.published);
+      return Number.isFinite(publishedAt) && publishedAt >= cutoff && publishedAt <= now.getTime();
+    });
   } catch {
     return [];
   }

@@ -29,6 +29,9 @@ import {
   type WikipediaToolDeps,
 } from './src/wikipediaTools.js';
 import { SERVER_VERSION } from './src/version.js';
+import {
+  classifyQuery, formatScore, GOOGLE_RELEVANCE_FLOOR, scoreSearchResult, WIKIPEDIA_RELEVANCE_FLOOR, weightedScore,
+} from './src/searchQuality.js';
 
 // Research Prompt Definitions - Rich Library for Research Workflows
 export const researchPrompts: Prompt[] = [
@@ -8830,9 +8833,12 @@ Develop and execute a strategic research networking approach to build valuable c
             try {
               const { query, num } = googleSearchInput.parse(args);
               const data = await this.googleSearch.search({ q: query, num });
-              const items = data.items || [];
+              const items = (data.items || [])
+                .map((item: any) => ({ ...item, score: scoreSearchResult(query, item.title, item.snippet) }))
+                .filter((item: any) => item.score >= GOOGLE_RELEVANCE_FLOOR)
+                .sort((a: any, b: any) => b.score - a.score);
               const results = items.map((item: any, index: number) =>
-                `${index + 1}. **${item.title}**\n   ${item.snippet}\n   ${item.link}`
+                `${index + 1}. **${item.title}** (score: ${formatScore(item.score)})\n   ${item.snippet}\n   ${item.link}`
               ).join('\n\n');
 
               return {
@@ -8965,12 +8971,19 @@ Develop and execute a strategic research networking approach to build valuable c
                 num: multiMax,
               });
 
-              const items = result.items || [];
+              const routing = classifyQuery(multiQuery);
+              const items = (result.items || [])
+                .map((item: any) => ({
+                  ...item,
+                  score: weightedScore(scoreSearchResult(multiQuery, item.title, item.snippet), routing.multipliers.google),
+                }))
+                .filter((item: any) => item.score >= GOOGLE_RELEVANCE_FLOOR)
+                .sort((a: any, b: any) => b.score - a.score);
               return {
                 content: [{
                   type: 'text',
                   text: `Multi-site search results for "${multiQuery}" across ${multiSites.join(', ')}:\n\n${items.map((item: any, index: number) =>
-                    `${index + 1}. **${item.title}**\n   ${item.snippet}\n   ${item.link}\n   Site: ${item.displayLink}`
+                    `${index + 1}. **${item.title}** (score: ${formatScore(item.score)})\n   ${item.snippet}\n   ${item.link}\n   Site: ${item.displayLink}`
                   ).join('\n')}`,
                 }],
               };
@@ -8986,13 +8999,13 @@ Develop and execute a strategic research networking approach to build valuable c
             const { query: academicQuery, fileType: academicFileType, dateRange: academicDateRange, sites: academicSites = [], maxResults: academicMaxRaw = 5 } = args as any;
             const academicMax = clampInt(academicMaxRaw, 5, 1, 10);
             try {
-              const papers = await arxivSearch(academicQuery, academicMax);
+              const papers = await arxivSearch(academicQuery, academicMax, academicDateRange);
               if (papers.length > 0) {
                 return {
                   content: [{
                     type: 'text',
                     text: `Found ${papers.length} academic papers on arXiv for "${academicQuery}":\n\n${papers.map((p, index) =>
-                      `${index + 1}. **${p.title}** (${p.published ? p.published.slice(0, 10) : 'Recent'})\n` +
+                      `${index + 1}. **${p.title}** (score: ${formatScore(scoreSearchResult(academicQuery, p.title, p.summary))}; ${p.published ? p.published.slice(0, 10) : 'Recent'})\n` +
                       `   Authors: ${p.authors.join(', ') || 'Unknown'}\n` +
                       `   ${p.summary ? p.summary.slice(0, 300) + '...' : ''}\n` +
                       `   ${p.link}`
@@ -9009,12 +9022,15 @@ Develop and execute a strategic research networking approach to build valuable c
                 dateRestrict: academicDateRange,
                 num: academicMax,
               });
-              const items = results.items || [];
+              const items = (results.items || [])
+                .map((item: any) => ({ ...item, score: scoreSearchResult(academicQuery, item.title, item.snippet) }))
+                .filter((item: any) => item.score >= GOOGLE_RELEVANCE_FLOOR)
+                .sort((a: any, b: any) => b.score - a.score);
               return {
                 content: [{
                   type: 'text',
                   text: `Found ${items.length} academic results for "${academicQuery}":\n\n${items.map((item: any, index: number) =>
-                    `${index + 1}. **${item.title}**\n   ${item.snippet}\n   ${item.link}\n`
+                    `${index + 1}. **${item.title}** (score: ${formatScore(item.score)})\n   ${item.snippet}\n   ${item.link}\n`
                   ).join('\n')}`,
                 }],
               };
@@ -9205,36 +9221,61 @@ Develop and execute a strategic research networking approach to build valuable c
             const n = clampInt(briefNum, 5, 1, 10);
             const retrievedAt = new Date().toISOString();
             const norm = normalizeTitle(briefQuery);
-            const [g, w] = await Promise.allSettled([
+            const routing = classifyQuery(briefQuery);
+            const [g, w, a, news] = await Promise.allSettled([
               this.googleSearch.search({ q: briefQuery, num: n }),
               this.wikipedia.search(briefQuery, { lang: briefLang, limit: n }),
+              routing.queryClass === 'academic' ? arxivSearch(briefQuery, n, 'y1') : Promise.resolve([]),
+              routing.queryClass === 'news' ? googleNewsSearch(briefQuery, { maxResults: n }) : Promise.resolve([]),
             ]);
             const googleItems = g.status === 'fulfilled' ? (g.value.items || []) : [];
             const googleError = g.status === 'rejected' ? String(g.reason?.message || g.reason) : null;
             const wikiItems = w.status === 'fulfilled' ? (w.value?.query?.search || []) : [];
             const wikiError = w.status === 'rejected' ? String(w.reason?.message || w.reason) : null;
+            const academicItems = a.status === 'fulfilled' ? a.value : [];
+            const newsItems = news.status === 'fulfilled' ? news.value : [];
             const seen = new Set<string>();
-            const ranked: Array<{ source: string; title: string; detail: string; url?: string; exact: boolean }> = [];
+            const ranked: Array<{ source: string; title: string; detail: string; url?: string; exact: boolean; score: number }> = [];
             for (const r of wikiItems) {
               const key = normalizeTitle(r.title);
               if (key && seen.has(key)) continue;
+              const baseScore = scoreSearchResult(briefQuery, r.title, (r.snippet || '').replace(/<[^>]+>/g, ''));
+              if (baseScore < WIKIPEDIA_RELEVANCE_FLOOR) continue;
               seen.add(key);
               ranked.push({
                 source: 'wikipedia', title: r.title,
                 detail: (r.snippet || '').replace(/<[^>]+>/g, ''),
                 url: `https://${briefLang}.wikipedia.org/wiki/${encodeURIComponent(String(r.title).replace(/ /g, '_'))}`,
                 exact: key === norm,
+                score: weightedScore(baseScore, routing.multipliers.wikipedia),
               });
             }
             for (const it of googleItems) {
               const key = normalizeTitle(it.title);
               if (key && seen.has(key)) continue;
+              const baseScore = scoreSearchResult(briefQuery, it.title, it.snippet || '');
+              if (baseScore < GOOGLE_RELEVANCE_FLOOR) continue;
               seen.add(key);
-              ranked.push({ source: 'google', title: it.title, detail: it.snippet || '', url: it.link, exact: key === norm });
+              ranked.push({
+                source: 'google', title: it.title, detail: it.snippet || '', url: it.link, exact: key === norm,
+                score: weightedScore(baseScore, routing.multipliers.google),
+              });
             }
-            ranked.sort((a, b) => Number(b.exact) - Number(a.exact));
+            for (const paper of academicItems) {
+              const baseScore = scoreSearchResult(briefQuery, paper.title, paper.summary);
+              if (baseScore < GOOGLE_RELEVANCE_FLOOR) continue;
+              ranked.push({ source: 'academic_search', title: paper.title, detail: paper.summary, url: paper.link, exact: false,
+                score: weightedScore(baseScore, routing.multipliers.academic_search) });
+            }
+            for (const article of newsItems) {
+              const baseScore = scoreSearchResult(briefQuery, article.title, article.snippet || '');
+              if (baseScore < GOOGLE_RELEVANCE_FLOOR) continue;
+              ranked.push({ source: 'news_monitor', title: article.title, detail: article.snippet || '', url: article.link, exact: false,
+                score: weightedScore(baseScore, routing.multipliers.news_monitor) });
+            }
+            ranked.sort((a, b) => b.score - a.score || Number(b.exact) - Number(a.exact));
             const lines = ranked.slice(0, n * 2).map((r, i) =>
-              `${i + 1}. [${r.source}${r.exact ? ' · exact' : ''}] **${r.title}**${r.url ? `\n   ${r.url}` : ''}${r.detail ? `\n   ${r.detail.slice(0, 280)}` : ''}`
+              `${i + 1}. [${r.source}${r.exact ? ' · exact' : ''}; score: ${formatScore(r.score)}] **${r.title}**${r.url ? `\n   ${r.url}` : ''}${r.detail ? `\n   ${r.detail.slice(0, 280)}` : ''}`
             );
             const flags = [
               googleError ? `google: ${isQuotaError(googleError) ? 'degraded (quota)' : 'error'} — ${googleError.slice(0, 120)}` : null,
