@@ -3,6 +3,11 @@
 ### Fixed
 - Centralize the advertised MCP server version and guard it against package.json drift.
 
+## [4.0.5] - 2026-11-19
+
+### Changed
+- npm audit fix clears two moderate advisories; search behaviour unchanged.
+
 ## [4.0.3] - 2026-11-18
 
 ### Fixed
