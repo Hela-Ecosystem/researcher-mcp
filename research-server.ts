@@ -30,8 +30,9 @@ import {
 } from './src/wikipediaTools.js';
 import { SERVER_VERSION } from './src/version.js';
 import {
-  classifyQuery, formatScore, GOOGLE_RELEVANCE_FLOOR, scoreSearchResult, WIKIPEDIA_RELEVANCE_FLOOR, weightedScore,
+  formatScore, GOOGLE_RELEVANCE_FLOOR, scoreSearchResult, WIKIPEDIA_RELEVANCE_FLOOR, weightedScore,
 } from './src/searchQuality.js';
+import { formatPriorsLine, resolveRouting } from './src/sourcePriors.js';
 
 // Research Prompt Definitions - Rich Library for Research Workflows
 export const researchPrompts: Prompt[] = [
@@ -8971,7 +8972,7 @@ Develop and execute a strategic research networking approach to build valuable c
                 num: multiMax,
               });
 
-              const routing = classifyQuery(multiQuery);
+              const routing = await resolveRouting(multiQuery);
               const items = (result.items || [])
                 .map((item: any) => ({
                   ...item,
@@ -8982,7 +8983,7 @@ Develop and execute a strategic research networking approach to build valuable c
               return {
                 content: [{
                   type: 'text',
-                  text: `Multi-site search results for "${multiQuery}" across ${multiSites.join(', ')}:\n\n${items.map((item: any, index: number) =>
+                  text: `Multi-site search results for "${multiQuery}" across ${multiSites.join(', ')} (${formatPriorsLine(routing)}):\n\n${items.map((item: any, index: number) =>
                     `${index + 1}. **${item.title}** (score: ${formatScore(item.score)})\n   ${item.snippet}\n   ${item.link}\n   Site: ${item.displayLink}`
                   ).join('\n')}`,
                 }],
@@ -9221,7 +9222,7 @@ Develop and execute a strategic research networking approach to build valuable c
             const n = clampInt(briefNum, 5, 1, 10);
             const retrievedAt = new Date().toISOString();
             const norm = normalizeTitle(briefQuery);
-            const routing = classifyQuery(briefQuery);
+            const routing = await resolveRouting(briefQuery);
             const [g, w, a, news] = await Promise.allSettled([
               this.googleSearch.search({ q: briefQuery, num: n }),
               this.wikipedia.search(briefQuery, { lang: briefLang, limit: n }),
@@ -9284,7 +9285,7 @@ Develop and execute a strategic research networking approach to build valuable c
             return {
               content: [{
                 type: 'text',
-                text: `Research brief for "${briefQuery}" (retrievedAt: ${retrievedAt}${flags.length ? `; ${flags.join('; ')}` : ''}):\n\n${lines.join('\n\n') || 'No results from any source.'}`,
+                text: `Research brief for "${briefQuery}" (retrievedAt: ${retrievedAt}; ${formatPriorsLine(routing)}${flags.length ? `; ${flags.join('; ')}` : ''}):\n\n${lines.join('\n\n') || 'No results from any source.'}`,
               }],
             };
           }

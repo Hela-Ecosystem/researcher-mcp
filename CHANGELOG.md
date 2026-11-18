@@ -1,3 +1,9 @@
+## [4.0.7] - 2026-11-19
+
+### Added
+- Learned search-source priors. `research_brief` and `multi_site_search` now read hela-genome's `source_feedback` table READ-ONLY (`node:sqlite` with the read-only flag, no new dependency) and derive per-source multipliers from recorded caller decisions instead of ranking on static constants alone. The genome database is resolved the way genome resolves it — `GUARDIAN_CENTRAL_DB` when absolute, else `~/memory/memory.db` — and one read is cached for 60 seconds, so a brief is not one query per candidate. A missing, unreadable or empty database silently falls back to today's static multipliers; both tools print which table was used (`priors: static` / `priors: learned (N samples)`).
+- Collapse guard. Once a `(query_class, source)` cell has at least 5 samples, a Beta-smoothed success rate `p = (used + 1) / (n + 2)` maps to `clamp(1 + 1.0 * (p - 0.5), 0.5, 1.5)`; below that the static prior stands. A source with no samples in a class that already has 5, or whose newest sample is over 30 days old, is floored at 1.0 and lifted by a 0.15 exploration bonus, so a source that stopped being sampled can always be picked again and recover. Fifteen tests, three of which fail if the guard is removed.
+
 ## [4.0.6] - 2026-11-19
 
 ### Fixed

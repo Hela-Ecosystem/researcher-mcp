@@ -7,7 +7,8 @@ import { freeSearch, freeExtract, listFreeEngines, arxivSearch, googleNewsSearch
 import { createWikipediaMcp } from "./mcp.js";
 import { registerEnvTool, withEnvelope } from "./envelope.js";
 import { googleSearchInput } from "./googleSearchTools.js";
-import { classifyQuery, formatScore, GOOGLE_RELEVANCE_FLOOR, scoreSearchResult, weightedScore, WIKIPEDIA_RELEVANCE_FLOOR } from "./searchQuality.js";
+import { formatScore, GOOGLE_RELEVANCE_FLOOR, scoreSearchResult, weightedScore, WIKIPEDIA_RELEVANCE_FLOOR } from "./searchQuality.js";
+import { formatPriorsLine, resolveRouting } from "./sourcePriors.js";
 import {
   searchProvenance,
   wikipediaSearchUrl,
@@ -298,8 +299,8 @@ export function createCombinedMcp(
         googleSource(`site:${args.sites.join(" OR site:")} ${args.query}`),
         searchProvenance(args.query),
       ]);
-      const routing = classifyQuery(args.query);
-      return `${formatGoogleItems(data.items ?? [], args.query, routing.multipliers.google)}\n\n${footer}`;
+      const routing = await resolveRouting(args.query);
+      return `${formatPriorsLine(routing)}\n\n${formatGoogleItems(data.items ?? [], args.query, routing.multipliers.google)}\n\n${footer}`;
     }
   );
 
@@ -353,7 +354,7 @@ export function createCombinedMcp(
     async (args) => {
       const n = args.maxResults ?? 5;
       const lang = args.lang ?? "en";
-      const routing = classifyQuery(args.query);
+      const routing = await resolveRouting(args.query);
       const [g, w, academic, news] = await Promise.all([
         google.search({ q: args.query, num: n }),
         wikipediaService.search(args.query, { limit: n, lang }),
@@ -390,6 +391,8 @@ export function createCombinedMcp(
       ]);
       return [
         `# Research brief: ${args.query}`,
+        ``,
+        formatPriorsLine(routing),
         ``,
         `## Google`,
         formatGoogleItems(gItems, args.query, routing.multipliers.google),
