@@ -1,3 +1,8 @@
+## [4.0.9] - 2026-11-19
+
+### Fixed
+- CI failed on Node 20 because the priors suite imported `node:sqlite` at file scope, and that module only exists from Node 22.5. The package still claims Node 20, where the learned priors deliberately degrade to the static table, so the database cases are now gated on the runtime version and the constructor is loaded lazily. Nothing changes on Node 22+.
+
 ## [4.0.8] - 2026-11-19
 
 ### Fixed

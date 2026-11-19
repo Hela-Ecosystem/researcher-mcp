@@ -1,7 +1,23 @@
 import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { DatabaseSync } from "node:sqlite";
+/**
+ * node:sqlite arrived in Node 22.5, and this package still claims Node 20 — where the
+ * priors read degrades to the static table. Gate on the runtime instead of importing
+ * the module at file scope, so the suite runs (with the database cases skipped) there.
+ */
+const sqliteSupported = (() => {
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  return major > 22 || (major === 22 && minor >= 5);
+})();
+
+let DatabaseSyncCtor: typeof import("node:sqlite").DatabaseSync | undefined;
+
+const openDb = (path: string, options?: { readOnly?: boolean }) => {
+  if (!DatabaseSyncCtor) throw new Error("node:sqlite is unavailable on this runtime");
+  return options ? new DatabaseSyncCtor(path, options) : new DatabaseSyncCtor(path);
+};
+const describeWithSqlite = sqliteSupported ? describe : describe.skip;
 import { classifyQuery } from "../searchQuality.js";
 import {
   applyLearnedPriors,
@@ -29,7 +45,7 @@ const stat = (
 
 /** A fake genome database: the same table project-mcp creates, filled by hand. */
 function fakeGenome(dbPath: string, rows: Array<{ query_class: string; source: string; used: boolean; daysAgo?: number }>): void {
-  const db = new DatabaseSync(dbPath);
+  const db = openDb(dbPath);
   db.exec(`CREATE TABLE source_feedback (
     id INTEGER PRIMARY KEY,
     recorded_at TEXT NOT NULL,
@@ -90,8 +106,12 @@ describe("resolveGenomeDbPath", () => {
   });
 });
 
-describe("reading a fake genome database", () => {
+describeWithSqlite("reading a fake genome database", () => {
   let directory: string;
+
+  beforeAll(async () => {
+    DatabaseSyncCtor = (await import("node:sqlite")).DatabaseSync;
+  });
 
   beforeEach(() => {
     directory = mkdtempSync(join(tmpdir(), "enzyme-priors-"));
@@ -157,7 +177,7 @@ describe("reading a fake genome database", () => {
 
   it("falls back to static when the table has not been created yet", async () => {
     const dbPath = join(directory, "empty.db");
-    const db = new DatabaseSync(dbPath);
+    const db = openDb(dbPath);
     db.exec("CREATE TABLE entities (name TEXT)");
     db.close();
     await expect(readFeedbackStats(dbPath)).resolves.toBeNull();
@@ -181,7 +201,7 @@ describe("reading a fake genome database", () => {
     expect(first.samples).toBe(MIN_SAMPLES);
 
     // More feedback lands, but a call inside the 60s window still sees the cached read.
-    const db = new DatabaseSync(dbPath);
+    const db = openDb(dbPath);
     for (let i = 0; i < 10; i++) {
       db.prepare("INSERT INTO source_feedback (recorded_at, query_class, source, used) VALUES (?, ?, ?, ?)")
         .run(iso(1), "general", "google", 1);
@@ -197,7 +217,7 @@ describe("reading a fake genome database", () => {
 });
 
 function countRows(dbPath: string): number {
-  const db = new DatabaseSync(dbPath, { readOnly: true });
+  const db = openDb(dbPath, { readOnly: true });
   const row = db.prepare("SELECT COUNT(*) AS n FROM source_feedback").get() as { n: number };
   db.close();
   return Number(row.n);
