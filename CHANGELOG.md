@@ -1,3 +1,8 @@
+## [4.2.2] - 2026-11-22
+
+### Fixed
+- The IDF half of the relevance scorer was inert in production: `research_brief` called `scoreSearchResult` without a candidate corpus, so every term kept the uniform weight and only morphological folding applied. The brief now builds the corpus from the pages it actually returned, so a term present in every title contributes little and a rare one carries the match (researcher-mcp#36).
+
 ## [4.2.1] - 2026-11-22
 
 ### Fixed

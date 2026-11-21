@@ -9244,11 +9244,17 @@ Develop and execute a strategic research networking approach to build valuable c
             };
             const buildRanked = (data: ReturnType<typeof unpackBrief>) => {
               const seen = new Set<string>();
+              // Terms are weighted by how much they discriminate among the candidates in
+              // hand; without this corpus the IDF half of the scorer never engages
+              // (researcher-mcp#36).
+              const corpus = [...data.wikiItems, ...data.googleItems, ...data.academicItems, ...data.newsItems]
+                .filter((item: any) => item && typeof item.title === 'string')
+                .map((item: any) => ({ title: item.title, snippet: item.snippet ?? item.summary ?? '' }));
               const ranked: Array<{ source: string; title: string; detail: string; url?: string; exact: boolean; score: number }> = [];
               for (const r of data.wikiItems) {
                 const key = normalizeTitle(r.title);
                 if (key && seen.has(key)) continue;
-                const baseScore = scoreSearchResult(briefQuery, r.title, (r.snippet || '').replace(/<[^>]+>/g, ''));
+                const baseScore = scoreSearchResult(briefQuery, r.title, (r.snippet || '').replace(/<[^>]+>/g, ''), corpus);
                 if (baseScore < WIKIPEDIA_RELEVANCE_FLOOR) continue;
                 seen.add(key);
                 ranked.push({
@@ -9262,7 +9268,7 @@ Develop and execute a strategic research networking approach to build valuable c
               for (const it of data.googleItems) {
                 const key = normalizeTitle(it.title);
                 if (key && seen.has(key)) continue;
-                const baseScore = scoreSearchResult(briefQuery, it.title, it.snippet || '');
+                const baseScore = scoreSearchResult(briefQuery, it.title, it.snippet || '', corpus);
                 if (baseScore < GOOGLE_RELEVANCE_FLOOR) continue;
                 seen.add(key);
                 ranked.push({
@@ -9271,13 +9277,13 @@ Develop and execute a strategic research networking approach to build valuable c
                 });
               }
               for (const paper of data.academicItems) {
-                const baseScore = scoreSearchResult(briefQuery, paper.title, paper.summary);
+                const baseScore = scoreSearchResult(briefQuery, paper.title, paper.summary, corpus);
                 if (baseScore < GOOGLE_RELEVANCE_FLOOR) continue;
                 ranked.push({ source: 'academic_search', title: paper.title, detail: paper.summary, url: paper.link, exact: false,
                   score: weightedScore(baseScore, routing.multipliers.academic_search) });
               }
               for (const article of data.newsItems) {
-                const baseScore = scoreSearchResult(briefQuery, article.title, article.snippet || '');
+                const baseScore = scoreSearchResult(briefQuery, article.title, article.snippet || '', corpus);
                 if (baseScore < GOOGLE_RELEVANCE_FLOOR) continue;
                 ranked.push({ source: 'news_monitor', title: article.title, detail: article.snippet || '', url: article.link, exact: false,
                   score: weightedScore(baseScore, routing.multipliers.news_monitor) });
