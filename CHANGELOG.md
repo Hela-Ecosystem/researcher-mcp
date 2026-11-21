@@ -1,3 +1,8 @@
+## [4.2.0] - 2026-11-22
+
+### Added
+- Follow-up signals are written, not just described. When a tool opens a URL a recent `research_brief` returned, Enzyme now appends a used=true record (with the display rank) to `~/.local/state/hela/search-feedback.jsonl`; genome drains it on the next `search_priors`/`search_feedback` call. The response still says what happened, and falls back to the manual call when the append fails. This closes the gap in 4.1.0, where the loop was feedable but nobody fed it. (`researcher-mcp#35`)
+
 ## [4.1.0] - 2026-11-22
 
 ### Added

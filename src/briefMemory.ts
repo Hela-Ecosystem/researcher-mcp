@@ -12,6 +12,7 @@
  */
 
 import type { QueryClass, SearchSource } from "./searchQuality.js";
+import { appendFeedback } from "./feedbackSpool.js";
 
 export interface BriefUrl {
   url: string;
@@ -21,6 +22,7 @@ export interface BriefUrl {
 interface BriefEntry {
   queryClass: QueryClass;
   source: SearchSource;
+  rank: number;
   recordedAt: number;
 }
 
@@ -41,14 +43,18 @@ function prune(now: number): void {
 export function rememberBrief(queryClass: QueryClass, urls: BriefUrl[]): void {
   const now = Date.now();
   prune(now);
-  for (const { url, source } of urls) {
-    if (!url) continue;
+  urls.forEach(({ url, source }, index) => {
+    if (!url) return;
     recent.delete(url);
-    recent.set(url, { queryClass, source, recordedAt: now });
-  }
+    recent.set(url, { queryClass, source, rank: index + 1, recordedAt: now });
+  });
 }
 
-/** The exact call to make, for a URL a brief returned, or null when it is unknown. */
+/**
+ * Observe a follow-up on a URL a brief returned: append one used-signal to the spool
+ * genome drains, and return a line saying so. The entry is consumed so a URL is
+ * recorded once, not on every read.
+ */
 export function feedbackHintForUrl(url: string): string | null {
   const entry = recent.get(url);
   if (!entry) return null;
@@ -56,9 +62,19 @@ export function feedbackHintForUrl(url: string): string | null {
     recent.delete(url);
     return null;
   }
+  recent.delete(url);
+  const queued = appendFeedback({
+    query_class: entry.queryClass,
+    source: entry.source,
+    used: true,
+    query: undefined,
+    note: `implicit follow-up; display rank ${entry.rank}`,
+  });
   return (
-    `feedback: this URL came from a recent research_brief (query_class=${entry.queryClass}, source=${entry.source}). ` +
-    `Record the follow-up: genome search_feedback(query_class="${entry.queryClass}", source="${entry.source}", used=true)`
+    `feedback: this URL came from a recent research_brief (query_class=${entry.queryClass}, source=${entry.source}, rank ${entry.rank}). ` +
+    (queued
+      ? 'Recorded a used=true signal for genome; it is applied on the next search_priors/search_feedback call.'
+      : 'Could not write the signal; record it manually: genome search_feedback(query_class="' + entry.queryClass + '", source="' + entry.source + '", used=true)')
   );
 }
 
