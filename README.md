@@ -1,7 +1,7 @@
 # Research MCP Server
 
 <!-- hela:version:start -->
-**MCP server:** `hela-enzyme` · **Version:** `4.0.9` · **Canonical tools:** 24. [Current tool reference](docs/TOOLS.md).
+**MCP server:** `hela-enzyme` · **Version:** `4.1.0` · **Canonical tools:** 24. [Current tool reference](docs/TOOLS.md).
 <!-- hela:version:end -->
 
 

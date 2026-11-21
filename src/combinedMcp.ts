@@ -7,7 +7,8 @@ import { freeSearch, freeExtract, listFreeEngines, arxivSearch, googleNewsSearch
 import { createWikipediaMcp } from "./mcp.js";
 import { registerEnvTool, withEnvelope } from "./envelope.js";
 import { googleSearchInput } from "./googleSearchTools.js";
-import { formatScore, GOOGLE_RELEVANCE_FLOOR, scoreSearchResult, weightedScore, WIKIPEDIA_RELEVANCE_FLOOR } from "./searchQuality.js";
+import { backoffQuery, formatScore, GOOGLE_RELEVANCE_FLOOR, scoreSearchResult, weightedScore, WIKIPEDIA_RELEVANCE_FLOOR } from "./searchQuality.js";
+import { feedbackHintForUrl, rememberBrief } from "./briefMemory.js";
 import { formatPriorsLine, resolveRouting } from "./sourcePriors.js";
 import {
   searchProvenance,
@@ -26,7 +27,8 @@ function googleSource(query: string): SourceProvenance {
 }
 
 function formatGoogleItems(items: Array<{ title: string; link: string; snippet: string }>, query: string, multiplier = 1): string {
-  const ranked = (items ?? []).map((r) => ({ ...r, score: weightedScore(scoreSearchResult(query, r.title, r.snippet ?? ""), multiplier) }))
+  const corpus = (items ?? []).map((r) => ({ title: r.title, snippet: r.snippet ?? "" }));
+  const ranked = (items ?? []).map((r) => ({ ...r, score: weightedScore(scoreSearchResult(query, r.title, r.snippet ?? "", corpus), multiplier) }))
     .filter((r) => r.score >= GOOGLE_RELEVANCE_FLOOR)
     .sort((a, b) => b.score - a.score);
   if (!ranked.length) return "No results.";
@@ -317,6 +319,7 @@ export function createCombinedMcp(
     },
     async (args) => {
       const a = await google.extractContent(args.url);
+      const feedbackHint = feedbackHintForUrl(args.url);
       const footer = formatSourcesFooter([
         {
           source: args.url,
@@ -332,6 +335,7 @@ export function createCombinedMcp(
         ``,
         `(${a.wordCount} words, sentiment ${a.sentiment.score})`,
         ``,
+        ...(feedbackHint ? [feedbackHint, ``] : []),
         footer,
       ].join("\n");
     }
@@ -355,12 +359,23 @@ export function createCombinedMcp(
       const n = args.maxResults ?? 5;
       const lang = args.lang ?? "en";
       const routing = await resolveRouting(args.query);
-      const [g, w, academic, news] = await Promise.all([
-        google.search({ q: args.query, num: n }),
-        wikipediaService.search(args.query, { limit: n, lang }),
-        routing.queryClass === "academic" ? arxivSearch(args.query, n, "y1") : Promise.resolve([]),
-        routing.queryClass === "news" ? googleNewsSearch(args.query, { maxResults: n }) : Promise.resolve([]),
+
+      const fetchAll = (query: string) => Promise.all([
+        google.search({ q: query, num: n }),
+        wikipediaService.search(query, { limit: n, lang }),
+        routing.queryClass === "academic" ? arxivSearch(query, n, "y1") : Promise.resolve([]),
+        routing.queryClass === "news" ? googleNewsSearch(query, { maxResults: n }) : Promise.resolve([]),
       ]);
+
+      let [g, w, academic, news] = await fetchAll(args.query);
+      // Google CSE over-constrains on long natural-language questions and returns
+      // nothing. Retry once with the highest-information terms, disclose it, and
+      // keep scoring against the original question (researcher-mcp#34).
+      const firstPassEmpty = (g.items ?? []).length === 0 && (w ?? []).length === 0 && academic.length === 0 && news.length === 0;
+      const reduced = firstPassEmpty ? backoffQuery(args.query) : null;
+      if (reduced) {
+        [g, w, academic, news] = await fetchAll(reduced);
+      }
       const gItems: Array<{ title: string; link: string; snippet: string }> = g.items ?? [];
       const seen = new Set(gItems.map((r) => r.link));
       const wikiUrl = (title: string) =>
@@ -389,10 +404,25 @@ export function createCombinedMcp(
           freshness: "fresh",
         },
       ]);
+      rememberBrief(routing.queryClass, [
+        ...gItems.map((item) => ({ url: item.link, source: "google" as const })),
+        ...wItems.map((item) => ({ url: item.link, source: "wikipedia" as const })),
+        ...academic.map((paper: any) => ({ url: paper.link, source: "academic_search" as const })),
+        ...news.map((item: any) => ({ url: item.link, source: "news_monitor" as const })),
+      ]);
+
+      const sourcesWithResults = [
+        gItems.length ? "google" : null,
+        wItems.length ? "wikipedia" : null,
+        academic.length ? "academic_search" : null,
+        news.length ? "news_monitor" : null,
+      ].filter(Boolean).join(", ") || "none";
+
       return [
         `# Research brief: ${args.query}`,
         ``,
         formatPriorsLine(routing),
+        ...(reduced ? [`backoff: "${reduced}"`] : []),
         ``,
         `## Google`,
         formatGoogleItems(gItems, args.query, routing.multipliers.google),
@@ -401,6 +431,8 @@ export function createCombinedMcp(
         wItems.length ? wItems.map((p, i) => `${i + 1}. ${p.title} (score: ${formatScore(p.score)})\n   ${p.link}\n   ${p.snippet}`).join("\n") : "No results.",
         ...(academic.length ? ["", "## Academic Search", ...academic.map((p, i) => `${i + 1}. ${p.title} (score: ${formatScore(weightedScore(scoreSearchResult(args.query, p.title, p.summary), routing.multipliers.academic_search))}; ${p.published.slice(0, 10)})\n   ${p.link}`)] : []),
         ...(news.length ? ["", "## News Monitor", ...news.map((p, i) => `${i + 1}. ${p.title} (score: ${formatScore(weightedScore(scoreSearchResult(args.query, p.title, p.snippet ?? ""), routing.multipliers.news_monitor))})\n   ${p.link}`)] : []),
+        ``,
+        `feedback: query_class=${routing.queryClass}; sources=${sourcesWithResults} — genome search_feedback(query_class="${routing.queryClass}", source="<source>", used=true)`,
         ``,
         footer,
       ].join("\n");

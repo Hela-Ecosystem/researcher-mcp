@@ -8,21 +8,90 @@ const STOPWORDS = new Set([
   "which", "who", "why", "with",
 ]);
 
-export function queryTerms(query: string): string[] {
-  return [...new Set((query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])
-    .filter((term) => term.length > 2 && !STOPWORDS.has(term)))];
+/**
+ * Collapse light morphological variants so `tool`/`tools` and `call`/`calls` count
+ * once. Full stemming is overkill here; trailing s/es/ed/ing on words over four
+ * characters covers the cases that actually inflate the coverage denominator
+ * (terminal-mcp#36).
+ */
+export function foldTerm(term: string): string {
+  if (term.length <= 3) return term;
+  for (const suffix of ["ing", "ed", "es", "s"]) {
+    // Keep at least three characters: "apis" -> "api" is wanted, "used" -> "us" is not.
+    if (term.endsWith(suffix) && term.length - suffix.length >= 3) {
+      return term.slice(0, -suffix.length);
+    }
+  }
+  return term;
 }
 
-export function scoreSearchResult(query: string, title = "", snippet = ""): number {
+export function queryTerms(query: string): string[] {
+  const raw = (query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])
+    .filter((term) => term.length > 2 && !STOPWORDS.has(term));
+  return [...new Set(raw.map(foldTerm))];
+}
+
+/**
+ * A reduced query for the one retry after every source returns zero. Longer terms
+ * are rarer and carry the query; short ones are usually noise (researcher-mcp#34).
+ */
+export function backoffQuery(query: string, limit = 5): string | null {
+  const terms = queryTerms(query);
+  // Only reshape a genuinely long query; a three-word query is already tight.
+  if (terms.length < 4) return null;
+  const keep = new Set([...terms].sort((a, b) => b.length - a.length).slice(0, limit));
+  const ordered = terms.filter((term) => keep.has(term));
+  if (ordered.length >= terms.length) return null;
+  // Preserve the original word order: it reads better to a search engine.
+  return ordered.join(" ");
+}
+
+/**
+ * Weight terms by how much they discriminate *among the candidates in hand*.
+ * A term present in every title/snippet tells us nothing for this query; one that
+ * appears in a few carries it. Weights are normalised to a mean of 1 so the
+ * relevance floors keep their meaning.
+ */
+export function termWeights(terms: string[], corpus: Array<{ title: string; snippet?: string }> = []): Map<string, number> {
+  const weights = new Map<string, number>();
+  if (!terms.length) return weights;
+  if (!corpus.length) {
+    for (const term of terms) weights.set(term, 1);
+    return weights;
+  }
+  const documents = corpus.map((doc) => `${doc.title} ${doc.snippet ?? ""}`.toLowerCase());
+  const total = documents.length;
+  let sum = 0;
+  for (const term of terms) {
+    const df = documents.filter((doc) => doc.includes(term)).length;
+    const idf = Math.log((total + 1) / (df + 0.5));
+    const weight = Math.min(2, Math.max(0.35, idf));
+    weights.set(term, weight);
+    sum += weight;
+  }
+  const mean = sum / terms.length;
+  if (mean > 0) for (const [term, weight] of weights) weights.set(term, weight / mean);
+  return weights;
+}
+
+export function scoreSearchResult(
+  query: string,
+  title = "",
+  snippet = "",
+  corpus: Array<{ title: string; snippet?: string }> = [],
+): number {
   const terms = queryTerms(query);
   if (!terms.length) return 0;
   const titleText = title.toLowerCase();
   const snippetText = snippet.toLowerCase();
+  const weights = termWeights(terms, corpus);
+  const totalWeight = terms.reduce((sum, term) => sum + (weights.get(term) ?? 1), 0);
   const coverage = terms.reduce((sum, term) => {
-    if (titleText.includes(term)) return sum + 1;
-    if (snippetText.includes(term)) return sum + 0.45;
+    const weight = weights.get(term) ?? 1;
+    if (titleText.includes(term)) return sum + weight;
+    if (snippetText.includes(term)) return sum + 0.45 * weight;
     return sum;
-  }, 0) / terms.length;
+  }, 0) / (totalWeight || 1);
   const phrase = query.trim().length > 2 &&
     `${title} ${snippet}`.toLowerCase().includes(query.trim().toLowerCase());
   return Math.min(1, coverage + (phrase ? EXACT_PHRASE_BONUS : 0));

@@ -1,3 +1,12 @@
+## [4.1.0] - 2026-11-22
+
+### Added
+- `research_brief` retries once with a reduced query when every source returns nothing, and discloses it (`backoff: "…"`) in the header. Google CSE over-constrains on long natural-language questions, so a normal research question could return "No results from any source" while a three-word version of the same question found seven. The retry keeps the highest-information terms, preserves their order, is scored against the original question, and is capped at one attempt. (`researcher-mcp#34`)
+- `research_brief` now returns a feedback handle — the routing class and the sources that produced results — plus the exact `genome search_feedback(...)` call, so recording a decision no longer requires re-deriving the class. A follow-up tool called on a URL from a recent brief appends the same call with `used=true`, which is the moment the signal actually exists. (`researcher-mcp#35`)
+
+### Changed
+- Relevance scoring folds light morphological variants (`tool`/`tools`, `call`/`calls`) before counting coverage, so a duplicated stem no longer dilutes a result. Terms are weighted by how much they discriminate among the candidates in hand (IDF), normalised to a mean of one so the existing relevance floors keep their meaning. A term present in every title contributes almost nothing; a rare one carries the match. (`researcher-mcp#36`)
+
 ## [4.0.9] - 2026-11-19
 
 ### Fixed
