@@ -30,8 +30,9 @@ import {
 } from './src/wikipediaTools.js';
 import { SERVER_VERSION } from './src/version.js';
 import {
-  formatScore, GOOGLE_RELEVANCE_FLOOR, scoreSearchResult, WIKIPEDIA_RELEVANCE_FLOOR, weightedScore,
+  backoffQuery, formatScore, GOOGLE_RELEVANCE_FLOOR, scoreSearchResult, WIKIPEDIA_RELEVANCE_FLOOR, weightedScore,
 } from './src/searchQuality.js';
+import { feedbackHintForUrl, rememberBrief } from './src/briefMemory.js';
 import { formatPriorsLine, resolveRouting } from './src/sourcePriors.js';
 
 // Research Prompt Definitions - Rich Library for Research Workflows
@@ -8911,8 +8912,9 @@ Develop and execute a strategic research networking approach to build valuable c
                 };
               }
 
+              const followUpHint = feedbackHintForUrl(url);
               return {
-                content: [{ type: 'text', text: `**${pageTitle || 'Extracted Content'}**\n\n${pageContent}` }],
+                content: [{ type: 'text', text: `**${pageTitle || 'Extracted Content'}**\n\n${pageContent}${followUpHint ? `\n\n${followUpHint}` : ''}` }],
               };
             } catch (error) {
               return {
@@ -9223,58 +9225,80 @@ Develop and execute a strategic research networking approach to build valuable c
             const retrievedAt = new Date().toISOString();
             const norm = normalizeTitle(briefQuery);
             const routing = await resolveRouting(briefQuery);
-            const [g, w, a, news] = await Promise.allSettled([
-              this.googleSearch.search({ q: briefQuery, num: n }),
-              this.wikipedia.search(briefQuery, { lang: briefLang, limit: n }),
-              routing.queryClass === 'academic' ? arxivSearch(briefQuery, n, 'y1') : Promise.resolve([]),
-              routing.queryClass === 'news' ? googleNewsSearch(briefQuery, { maxResults: n }) : Promise.resolve([]),
+            const fetchBrief = (briefRequest: string) => Promise.allSettled([
+              this.googleSearch.search({ q: briefRequest, num: n }),
+              this.wikipedia.search(briefRequest, { lang: briefLang, limit: n }),
+              routing.queryClass === 'academic' ? arxivSearch(briefRequest, n, 'y1') : Promise.resolve([]),
+              routing.queryClass === 'news' ? googleNewsSearch(briefRequest, { maxResults: n }) : Promise.resolve([]),
             ]);
-            const googleItems = g.status === 'fulfilled' ? (g.value.items || []) : [];
-            const googleError = g.status === 'rejected' ? String(g.reason?.message || g.reason) : null;
-            const wikiItems = w.status === 'fulfilled' ? (w.value?.query?.search || []) : [];
-            const wikiError = w.status === 'rejected' ? String(w.reason?.message || w.reason) : null;
-            const academicItems = a.status === 'fulfilled' ? a.value : [];
-            const newsItems = news.status === 'fulfilled' ? news.value : [];
-            const seen = new Set<string>();
-            const ranked: Array<{ source: string; title: string; detail: string; url?: string; exact: boolean; score: number }> = [];
-            for (const r of wikiItems) {
-              const key = normalizeTitle(r.title);
-              if (key && seen.has(key)) continue;
-              const baseScore = scoreSearchResult(briefQuery, r.title, (r.snippet || '').replace(/<[^>]+>/g, ''));
-              if (baseScore < WIKIPEDIA_RELEVANCE_FLOOR) continue;
-              seen.add(key);
-              ranked.push({
-                source: 'wikipedia', title: r.title,
-                detail: (r.snippet || '').replace(/<[^>]+>/g, ''),
-                url: `https://${briefLang}.wikipedia.org/wiki/${encodeURIComponent(String(r.title).replace(/ /g, '_'))}`,
-                exact: key === norm,
-                score: weightedScore(baseScore, routing.multipliers.wikipedia),
-              });
+            const unpackBrief = (briefResults: Awaited<ReturnType<typeof fetchBrief>>) => {
+              const [g, w, a, news] = briefResults;
+              return {
+                googleItems: g.status === 'fulfilled' ? (g.value.items || []) : [],
+                googleError: g.status === 'rejected' ? String(g.reason?.message || g.reason) : null,
+                wikiItems: w.status === 'fulfilled' ? (w.value?.query?.search || []) : [],
+                wikiError: w.status === 'rejected' ? String(w.reason?.message || w.reason) : null,
+                academicItems: a.status === 'fulfilled' ? a.value : [],
+                newsItems: news.status === 'fulfilled' ? news.value : [],
+              };
+            };
+            const buildRanked = (data: ReturnType<typeof unpackBrief>) => {
+              const seen = new Set<string>();
+              const ranked: Array<{ source: string; title: string; detail: string; url?: string; exact: boolean; score: number }> = [];
+              for (const r of data.wikiItems) {
+                const key = normalizeTitle(r.title);
+                if (key && seen.has(key)) continue;
+                const baseScore = scoreSearchResult(briefQuery, r.title, (r.snippet || '').replace(/<[^>]+>/g, ''));
+                if (baseScore < WIKIPEDIA_RELEVANCE_FLOOR) continue;
+                seen.add(key);
+                ranked.push({
+                  source: 'wikipedia', title: r.title,
+                  detail: (r.snippet || '').replace(/<[^>]+>/g, ''),
+                  url: `https://${briefLang}.wikipedia.org/wiki/${encodeURIComponent(String(r.title).replace(/ /g, '_'))}`,
+                  exact: key === norm,
+                  score: weightedScore(baseScore, routing.multipliers.wikipedia),
+                });
+              }
+              for (const it of data.googleItems) {
+                const key = normalizeTitle(it.title);
+                if (key && seen.has(key)) continue;
+                const baseScore = scoreSearchResult(briefQuery, it.title, it.snippet || '');
+                if (baseScore < GOOGLE_RELEVANCE_FLOOR) continue;
+                seen.add(key);
+                ranked.push({
+                  source: 'google', title: it.title, detail: it.snippet || '', url: it.link, exact: key === norm,
+                  score: weightedScore(baseScore, routing.multipliers.google),
+                });
+              }
+              for (const paper of data.academicItems) {
+                const baseScore = scoreSearchResult(briefQuery, paper.title, paper.summary);
+                if (baseScore < GOOGLE_RELEVANCE_FLOOR) continue;
+                ranked.push({ source: 'academic_search', title: paper.title, detail: paper.summary, url: paper.link, exact: false,
+                  score: weightedScore(baseScore, routing.multipliers.academic_search) });
+              }
+              for (const article of data.newsItems) {
+                const baseScore = scoreSearchResult(briefQuery, article.title, article.snippet || '');
+                if (baseScore < GOOGLE_RELEVANCE_FLOOR) continue;
+                ranked.push({ source: 'news_monitor', title: article.title, detail: article.snippet || '', url: article.link, exact: false,
+                  score: weightedScore(baseScore, routing.multipliers.news_monitor) });
+              }
+              ranked.sort((a, b) => b.score - a.score || Number(b.exact) - Number(a.exact));
+              return ranked;
+            };
+
+            let briefData = unpackBrief(await fetchBrief(briefQuery));
+            let ranked = buildRanked(briefData);
+            // Retry once when the brief would report nothing. Google CSE over-constrains on
+            // long natural-language questions, and a page can also come back below the
+            // relevance floor (researcher-mcp#34).
+            const briefBackoff = ranked.length === 0 ? backoffQuery(briefQuery) : null;
+            if (briefBackoff) {
+              briefData = unpackBrief(await fetchBrief(briefBackoff));
+              ranked = buildRanked(briefData);
             }
-            for (const it of googleItems) {
-              const key = normalizeTitle(it.title);
-              if (key && seen.has(key)) continue;
-              const baseScore = scoreSearchResult(briefQuery, it.title, it.snippet || '');
-              if (baseScore < GOOGLE_RELEVANCE_FLOOR) continue;
-              seen.add(key);
-              ranked.push({
-                source: 'google', title: it.title, detail: it.snippet || '', url: it.link, exact: key === norm,
-                score: weightedScore(baseScore, routing.multipliers.google),
-              });
-            }
-            for (const paper of academicItems) {
-              const baseScore = scoreSearchResult(briefQuery, paper.title, paper.summary);
-              if (baseScore < GOOGLE_RELEVANCE_FLOOR) continue;
-              ranked.push({ source: 'academic_search', title: paper.title, detail: paper.summary, url: paper.link, exact: false,
-                score: weightedScore(baseScore, routing.multipliers.academic_search) });
-            }
-            for (const article of newsItems) {
-              const baseScore = scoreSearchResult(briefQuery, article.title, article.snippet || '');
-              if (baseScore < GOOGLE_RELEVANCE_FLOOR) continue;
-              ranked.push({ source: 'news_monitor', title: article.title, detail: article.snippet || '', url: article.link, exact: false,
-                score: weightedScore(baseScore, routing.multipliers.news_monitor) });
-            }
-            ranked.sort((a, b) => b.score - a.score || Number(b.exact) - Number(a.exact));
+            const { googleError, wikiError } = briefData;
+            rememberBrief(routing.queryClass, ranked.filter((entry) => entry.url).map((entry) => ({ url: entry.url as string, source: entry.source as any })));
+            const sourcesWithResults = [...new Set(ranked.map((entry) => entry.source))];
             const lines = ranked.slice(0, n * 2).map((r, i) =>
               `${i + 1}. [${r.source}${r.exact ? ' · exact' : ''}; score: ${formatScore(r.score)}] **${r.title}**${r.url ? `\n   ${r.url}` : ''}${r.detail ? `\n   ${r.detail.slice(0, 280)}` : ''}`
             );
@@ -9285,7 +9309,7 @@ Develop and execute a strategic research networking approach to build valuable c
             return {
               content: [{
                 type: 'text',
-                text: `Research brief for "${briefQuery}" (retrievedAt: ${retrievedAt}; ${formatPriorsLine(routing)}${flags.length ? `; ${flags.join('; ')}` : ''}):\n\n${lines.join('\n\n') || 'No results from any source.'}`,
+                text: `Research brief for "${briefQuery}" (retrievedAt: ${retrievedAt}; ${formatPriorsLine(routing)}${briefBackoff ? `; backoff: "${briefBackoff}"` : ''}${flags.length ? `; ${flags.join('; ')}` : ''}):\n\n${lines.join('\n\n') || 'No results from any source.'}\n\nfeedback: query_class=${routing.queryClass}; sources=${sourcesWithResults.join(', ') || 'none'} — genome search_feedback(query_class="${routing.queryClass}", source="<source>", used=true)`,
               }],
             };
           }

@@ -1,3 +1,10 @@
+## [4.2.1] - 2026-11-22
+
+### Fixed
+- The query backoff and feedback-spool behaviour shipped in 4.1.0/4.2.0 landed in `src/combinedMcp.ts`, but the executable entry point is the root `research-server.ts` (`dist/index.js` loads it). Production therefore kept the old `research_brief`: no backoff, no feedback handle, no spool writes. Ported to the real entry; a live probe of `dist/index.js` now shows `backoff: "…"` and the `feedback:` line. Found by end-to-end verification after deploy, not by the unit tests, which exercise the other entry.
+- Backoff now triggers on an empty **ranked** result rather than empty raw sources. Google can return pages that all fall below the relevance floor, which still reads as "No results from any source" to the caller.
+- `extract_content` on a URL a recent brief returned appends the used=true signal and says so, in the production entry as well.
+
 ## [4.2.0] - 2026-11-22
 
 ### Added
