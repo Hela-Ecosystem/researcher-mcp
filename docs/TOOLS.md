@@ -18,7 +18,7 @@ Format citations in APA, MLA, or Chicago style
 
 ## `content_deduplication`
 
-Deduplicate structured `{title, url, snippet}` items by canonical URL and title similarity; returns surviving objects plus a `mergedFrom` list as JSON
+Deduplicate structured {title, url, snippet} items by canonical URL and title similarity; returns surviving objects plus a mergedFrom list as JSON
 
 ## `content_sentiment_analysis`
 
