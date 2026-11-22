@@ -1,3 +1,15 @@
+## [4.3.3] - 2026-11-23
+
+### Changed
+- `content_deduplication` returns the surviving objects (title/url/snippet) with `mergedFrom` and `stats` instead of titles only, and canonicalises URLs (strips `utm_*`, fragments, trailing slash) before comparing.
+
+### Fixed
+- `content_summarizer` strips skip-links/nav/footer, joins blocks with spaces, and prefers `og:description`/meta description then the first main paragraph over raw body text. (`researcher-mcp#43`)
+- `fact_checker` labels each source with a stance and returns an overall verdict (ClaimReview ratings when a key is configured, otherwise inferred from source wording and labelled heuristic).
+- `research_assistant` deduplicates identical results across query variants and includes URLs/domains.
+- `wikipedia_get` removes the empty-parentheses artefact left after cleaning.
+- `multi_site_search` reports a per-site result count, so a zero-result site is visible instead of silent.
+
 ## [4.3.2] - 2026-11-22
 
 ### Fixed
