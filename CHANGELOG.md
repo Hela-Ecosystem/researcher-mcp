@@ -1,3 +1,8 @@
+## [4.3.2] - 2026-11-22
+
+### Fixed
+- `citation_formatter` keeps every author and follows each style. APA formats `Surname, G. M.,` lists with `&` before the last and initials; MLA inverts the first author and collapses three or more to `et al.`; Chicago inverts only the first and uses `and` before the last. Names accept `{given, family}` objects, particles and suffixes, and an unparseable name is kept verbatim with a warning instead of being dropped. `doi` is accepted alongside `url`. (`researcher-mcp#38`)
+
 ## [4.3.1] - 2026-11-22
 
 ### Fixed
