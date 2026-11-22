@@ -1,3 +1,8 @@
+## [4.3.1] - 2026-11-22
+
+### Fixed
+- `content_sentiment_analysis` applies negation across a short window instead of a single token, so "never recommend", "nobody loved it" and "hardly a success" score negative. The window stops at clause boundaries, negations the AFINN library already applied are reported but not flipped twice, and the response lists the negations it found plus a note that the method is lexicon-based. (`researcher-mcp#37`)
+
 ## [4.3.0] - 2026-11-22
 
 ### Changed

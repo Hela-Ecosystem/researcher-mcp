@@ -10,7 +10,7 @@ import axios from 'axios';
 import axiosRetry from 'axios-retry';
 import * as cheerio from 'cheerio';
 import LRUCache from 'lru-cache';
-import Sentiment from 'sentiment';
+import { analyzeSentiment } from './src/sentiment.js';
 import { z } from 'zod';
 import { GOOGLE_SEARCH_TOOL, googleSearchInput } from './src/googleSearchTools.js';
 import { Prompt, GetPromptRequestSchema, ListPromptsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -1423,8 +1423,7 @@ export default class ResearchMCPServer {
   }
 
   private analyzeSentiment(text: string): any {
-    const sentiment = new Sentiment();
-    return sentiment.analyze(text);
+    return analyzeSentiment(text);
   }
 
   private extractKeywords(text: string, maxKeywords: number): any[] {
@@ -9566,7 +9565,9 @@ Develop and execute a strategic research networking approach to build valuable c
                         `Score: ${sentiment.score}\n` +
                         `Comparative: ${sentiment.comparative}\n` +
                         `Positive words: ${sentiment.positive.join(', ')}\n` +
-                        `Negative words: ${sentiment.negative.join(', ')}\n\n` +
+                        `Negative words: ${sentiment.negative.join(', ')}\n` +
+                        `Negated: ${(sentiment.negated ?? []).map((n: any) => `${n.negator} ${n.token}`).join(', ') || 'none'}\n` +
+                        `Method: ${sentiment.method}\n\n` +
                         `Overall: ${sentiment.score > 0 ? 'Positive' : sentiment.score < 0 ? 'Negative' : 'Neutral'}`,
                 }],
               };
