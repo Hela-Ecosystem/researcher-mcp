@@ -39,6 +39,7 @@ import { feedbackHintForUrl, rememberBrief } from './src/briefMemory.js';
 import { formatPriorsLine, resolveRouting } from './src/sourcePriors.js';
 import { ResearchSessionStore, SESSION_NAME_PATTERN } from './src/researchSessionStore.js';
 import { inSearchTimeWindow, matchesSearchPhrase, searchTimeWindow, type DateRestriction, type SearchTimeWindow } from './src/searchTimeWindow.js';
+import { citationFormatterTool, formatCitation } from './src/citationFormatter.js';
 
 // Research Prompt Definitions - Rich Library for Research Workflows
 export const researchPrompts: Prompt[] = [
@@ -703,22 +704,7 @@ const tools = [
       required: ['url'],
     },
   },
-  {
-    name: 'citation_formatter',
-    description: 'Format citations in APA, MLA, or Chicago style',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        title: { type: 'string', description: 'Title of the work' },
-        authors: { type: 'array', items: { type: 'string' }, description: 'List of authors' },
-        year: { type: 'number', description: 'Publication year' },
-        source: { type: 'string', description: 'Source (journal, website, etc.)' },
-        url: { type: 'string', format: 'uri', description: 'URL if applicable' },
-        style: { type: 'string', enum: ['APA', 'MLA', 'Chicago'], description: 'Citation style', default: 'APA' },
-      },
-      required: ['title'],
-    },
-  },
+  citationFormatterTool,
   {
     name: 'research_session_manager',
     description: 'Save, load, list, and delete research sessions stored on disk',
@@ -1478,27 +1464,6 @@ export default class ResearchMCPServer {
       };
     } catch (error) {
       throw new Error(`Failed to fetch URL metadata: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  private formatCitation(data: any): string {
-    const { title, authors, year, source, url, style } = data;
-
-    switch (style.toUpperCase()) {
-      case 'APA':
-        const authorStr = authors.length > 0 ? `${authors[0]} (${year})` : `(${year})`;
-        return `${authorStr}. ${title}. ${source}${url ? `. ${url}` : ''}`;
-
-      case 'MLA':
-        const mlaAuthors = authors.length > 0 ? authors.join(', ') : 'Unknown Author';
-        return `${mlaAuthors}. "${title}." ${source}, ${year}${url ? `, ${url}` : ''}.`;
-
-      case 'CHICAGO':
-        const chicagoAuthors = authors.length > 0 ? authors.join(', ') : 'Unknown Author';
-        return `${chicagoAuthors}. "${title}." ${source}, ${year}${url ? `. ${url}` : ''}.`;
-
-      default:
-        return `${authors.join(', ')} (${year}). ${title}. ${source}.`;
     }
   }
 
@@ -9617,14 +9582,13 @@ Develop and execute a strategic research networking approach to build valuable c
             }
 
           case 'citation_formatter':
-            const { title: citeTitle, authors = [], year, source, url: citeUrl, style = 'APA' } = args as any;
             try {
-              const citation = this.formatCitation({ title: citeTitle, authors, year, source, url: citeUrl, style });
+              const { style, citation, warnings } = formatCitation(args);
               return {
-                content: [{
-                  type: 'text',
-                  text: `${style} Citation:\n\n${citation}`,
-                }],
+                content: [
+                  { type: 'text', text: `${style} Citation:\n\n${citation}` },
+                  ...warnings.map(text => ({ type: 'text' as const, text })),
+                ],
               };
             } catch (error) {
               return {
