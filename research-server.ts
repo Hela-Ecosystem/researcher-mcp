@@ -20,6 +20,8 @@ import {
   arxivSearch,
   googleNewsSearch,
   hackerNewsSearch,
+  decodeEntities,
+  unwrapUrl,
 } from './src/freeSearchService.js';
 import {
   WIKIPEDIA_TOOLS,
@@ -36,7 +38,7 @@ import {
 import { feedbackHintForUrl, rememberBrief } from './src/briefMemory.js';
 import { formatPriorsLine, resolveRouting } from './src/sourcePriors.js';
 import { ResearchSessionStore, SESSION_NAME_PATTERN } from './src/researchSessionStore.js';
-import { matchesSearchPhrase, searchTimeWindow, type DateRestriction, type SearchTimeWindow } from './src/searchTimeWindow.js';
+import { inSearchTimeWindow, matchesSearchPhrase, searchTimeWindow, type DateRestriction, type SearchTimeWindow } from './src/searchTimeWindow.js';
 
 // Research Prompt Definitions - Rich Library for Research Workflows
 export const researchPrompts: Prompt[] = [
@@ -610,8 +612,12 @@ interface WindowWebItem {
   publishedAt?: string;
 }
 
-function formatSearchWindow({ from, to }: SearchTimeWindow) {
-  return `Window (UTC): ${from.toISOString()} to ${to.toISOString()}\nSearch interest series unavailable from these sources.`;
+function formatWindow({ from, to }: SearchTimeWindow) {
+  return `Window (UTC): ${from.toISOString()} to ${to.toISOString()}`;
+}
+
+function formatSearchWindow(window: SearchTimeWindow) {
+  return `${formatWindow(window)}\nSearch interest series unavailable from these sources.`;
 }
 
 function searchDomain(item: WindowWebItem): string {
@@ -9120,17 +9126,25 @@ Develop and execute a strategic research networking approach to build valuable c
           case 'news_monitor': {
             const { topic, sources = [], language = 'en', country = 'us', maxResults: newsMaxRaw = 5, dateRestrict: newsDate = 'd7' } = args as any;
             const newsMax = clampInt(newsMaxRaw, 5, 1, 10);
+            const newsWindow = searchTimeWindow(newsDate as DateRestriction);
+            const stats = { dropped: 0 };
             try {
               const articles = await googleNewsSearch(topic, {
                 language,
                 country: country.toUpperCase(),
                 maxResults: newsMax,
+                window: newsWindow,
+                stats,
+                resolveLinks: true,
               });
               if (articles.length > 0) {
+                const dropped = stats.dropped > 0
+                  ? `\n${stats.dropped} article(s) fell outside the window and were dropped.`
+                  : '';
                 return {
                   content: [{
                     type: 'text',
-                    text: `Found ${articles.length} news articles about "${topic}":\n\n${articles.map((item, index) =>
+                    text: `Found ${articles.length} news articles about "${topic}"\n${formatWindow(newsWindow)}${dropped}\n\n${articles.map((item, index) =>
                       `${index + 1}. **${item.title}**\n   ${item.snippet || ''}\n   ${item.link}\n   Source: ${item.source} (${item.pubDate})\n`
                     ).join('\n')}`,
                   }],
@@ -9146,12 +9160,15 @@ Develop and execute a strategic research networking approach to build valuable c
                 gl: country,
                 num: newsMax,
               });
-              const items = results.items || [];
+              const inWindow = (results.items || []).filter((item: any) => {
+                const published = item.publishedAt || item.pagemap?.metatags?.[0]?.['article:published_time'];
+                return !published || inSearchTimeWindow(String(published), newsWindow);
+              });
               return {
                 content: [{
                   type: 'text',
-                  text: `Found ${items.length} news articles about "${topic}":\n\n${items.map((item: any, index: number) =>
-                    `${index + 1}. **${item.title}**\n   ${item.snippet}\n   ${item.link}\n   Source: ${item.displayLink}\n`
+                  text: `Found ${inWindow.length} news articles about "${topic}"\n${formatWindow(newsWindow)}\n\n${inWindow.map((item: any, index: number) =>
+                    `${index + 1}. **${decodeEntities(String(item.title ?? ''))}**\n   ${decodeEntities(String(item.snippet ?? ''))}\n   ${unwrapUrl(String(item.link ?? ''))}\n   Source: ${item.displayLink ?? 'web'}\n`
                   ).join('\n')}`,
                 }],
               };

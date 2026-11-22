@@ -52,6 +52,27 @@ function clean(s: string): string {
   return (s ?? "").replace(/\s+/g, " ").trim();
 }
 
+const NAMED_ENTITIES: Record<string, string> = {
+  nbsp: " ", amp: "&", lt: "<", gt: ">", quot: '"', apos: "'",
+  ndash: "\u2013", mdash: "\u2014", hellip: "\u2026", rsquo: "\u2019",
+  lsquo: "\u2018", rdquo: "\u201d", ldquo: "\u201c", bull: "\u2022",
+  // Latin-1 letters that appear in syndicated headlines.
+  agrave: "\u00e0", aacute: "\u00e1", acirc: "\u00e2", atilde: "\u00e3", auml: "\u00e4", aring: "\u00e5",
+  aelig: "\u00e6", ccedil: "\u00e7", egrave: "\u00e8", eacute: "\u00e9", ecirc: "\u00ea", euml: "\u00eb",
+  igrave: "\u00ec", iacute: "\u00ed", icirc: "\u00ee", iuml: "\u00ef", ntilde: "\u00f1",
+  ograve: "\u00f2", oacute: "\u00f3", ocirc: "\u00f4", otilde: "\u00f5", ouml: "\u00f6", oslash: "\u00f8",
+  ugrave: "\u00f9", uacute: "\u00fa", ucirc: "\u00fb", uuml: "\u00fc", yacute: "\u00fd", yuml: "\u00ff",
+  szlig: "\u00df",
+};
+
+/** RSS descriptions are HTML-escaped, so `&nbsp;` and `&#39;` reach the caller raw. */
+export function decodeEntities(value: string): string {
+  return (value ?? "")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
+    .replace(/&([a-z]+);/gi, (match, name) => NAMED_ENTITIES[String(name).toLowerCase()] ?? match);
+}
+
 /** Drop tracker/redirect wrappers back to the real destination URL. */
 export function unwrapUrl(href: string): string {
   try {
@@ -295,7 +316,16 @@ export async function arxivSearch(
  */
 export async function googleNewsSearch(
   topic: string,
-  opts: { language?: string; country?: string; maxResults?: number; window?: SearchTimeWindow } = {}
+  opts: {
+    language?: string;
+    country?: string;
+    maxResults?: number;
+    window?: SearchTimeWindow;
+    /** Filled with how many items the window rejected, for honest reporting. */
+    stats?: { dropped: number };
+    /** Follow Google News redirect links to the publisher (bounded, best effort). */
+    resolveLinks?: boolean;
+  } = {}
 ): Promise<NewsItem[]> {
   try {
     const lang = opts.language || "en-US";
@@ -321,21 +351,61 @@ export async function googleNewsSearch(
     const articles: NewsItem[] = [];
     $("item").each((_, el) => {
       if (articles.length >= limit) return;
-      const title = clean($(el).find("title").text());
+      const title = decodeEntities(clean($(el).find("title").text()));
       const link = clean($(el).find("link").text());
       const pubDate = clean($(el).find("pubDate").text());
-      if (window && !inSearchTimeWindow(pubDate, window)) return;
-      const source = clean($(el).find("source").text()) || "News";
+      if (window && !inSearchTimeWindow(pubDate, window)) {
+        if (opts.stats) opts.stats.dropped += 1;
+        return;
+      }
+      const source = decodeEntities(clean($(el).find("source").text())) || "News";
       const sourceUrl = $(el).find("source").attr("url");
-      const snippet = clean($(el).find("description").text()).replace(/<[^>]+>/g, "");
+      const snippet = decodeEntities(clean($(el).find("description").text()).replace(/<[^>]+>/g, ""));
       if (title && link) {
         articles.push({ title, link, pubDate, source, snippet, ...(sourceUrl && { sourceUrl }) });
       }
     });
+    if (opts.resolveLinks) {
+      const resolved = await Promise.all(articles.map(async article => ({
+        ...article,
+        link: await resolveNewsLink(article.link, article.sourceUrl),
+      })));
+      return resolved;
+    }
     return articles;
   } catch {
     return [];
   }
+}
+
+/**
+ * Google News RSS links point at a redirector that needs JavaScript to land on the
+ * publisher. Follow it once; when that fails, the publisher home is more useful
+ * than a news.google.com wrapper that renders nothing for an agent.
+ */
+export async function resolveNewsLink(link: string, sourceUrl?: string): Promise<string> {
+  const direct = unwrapUrl(link);
+  let hostname = "";
+  try {
+    hostname = new URL(direct).hostname;
+  } catch {
+    return direct;
+  }
+  if (!/(^|\.)news\.google\.com$/i.test(hostname)) return direct;
+  try {
+    const res = await axios.get<string>(direct, {
+      headers: { "User-Agent": UA },
+      timeout: 4000,
+      maxRedirects: 5,
+      responseType: "text",
+      validateStatus: () => true,
+    });
+    const finalUrl = res.request?.res?.responseUrl || res.config?.url || "";
+    if (finalUrl && !/news\.google\.com/i.test(finalUrl)) return finalUrl;
+  } catch {
+    // fall through to the publisher home
+  }
+  return sourceUrl && /^https?:\/\//.test(sourceUrl) ? sourceUrl : direct;
 }
 
 /**
