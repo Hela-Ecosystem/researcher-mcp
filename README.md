@@ -294,6 +294,7 @@ For global configuration (`~/.cursor/mcp.json`), replace `${workspaceFolder}` wi
 | `RESEARCHER_DEFAULT_LANG`        | Default Wikipedia language (overrides `WIKIPEDIA_DEFAULT_LANGUAGE`) | `en` | No |
 | `RESEARCHER_USER_AGENT`          | HTTP User-Agent for fetches | `hela-enzyme/1.0 (researcher-mcp; …)` | No |
 | `JINA_API_KEY`                   | Jina reader quota key (anonymous works, rate-limited) | - | No |
+| `HELA_RESEARCH_SESSION_DIR`      | Directory for saved research sessions | `$XDG_DATA_HOME/hela/researcher-mcp` or `~/.local/share/hela/researcher-mcp` | No |
 | `HELA_ENVELOPE` | Set to `true` to wrap tool results in the canonical HeLaResult envelope (`ok/summary/data/artifacts/provenance/warnings/sideEffects/execution`) | *unset = off (byte-identical legacy output)* | No |
 
 Wikipedia `search`/`getPage`/`getPageSummary` results carry a `Sources:` footer (canonical page URI, `retrieved_at`, confidence, freshness) so downstream consumers can cite provenance.
@@ -318,6 +319,12 @@ Wikipedia `search`/`getPage`/`getPageSummary` results carry a `Sources:` footer 
 ## Usage
 
 The Research MCP Server is designed to be used through MCP clients like Cursor, Claude, or other MCP-compatible applications. Configure it in your MCP client configuration as shown above.
+
+### Research sessions
+
+The production server loads `sessions.json` from the configured session directory at startup. Saves and deletions replace the file atomically, and server processes sharing the directory serialize their writes.
+
+Session names contain 1–64 ASCII letters, digits, dots, underscores, or hyphens. The store holds up to 100 sessions and 8 MiB of JSON. A save exceeding either limit returns `ok: false` with a reason. Delete a session or reduce the content to make room. A failed write leaves the last committed file intact.
 
 ### Local Development
 

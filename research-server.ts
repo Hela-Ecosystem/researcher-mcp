@@ -34,6 +34,7 @@ import {
 } from './src/searchQuality.js';
 import { feedbackHintForUrl, rememberBrief } from './src/briefMemory.js';
 import { formatPriorsLine, resolveRouting } from './src/sourcePriors.js';
+import { ResearchSessionStore, SESSION_NAME_PATTERN } from './src/researchSessionStore.js';
 
 // Research Prompt Definitions - Rich Library for Research Workflows
 export const researchPrompts: Prompt[] = [
@@ -676,12 +677,15 @@ const tools = [
   },
   {
     name: 'research_session_manager',
-    description: 'Manage research sessions, save findings, and organize notes',
+    description: 'Save, load, list, and delete research sessions stored on disk',
     inputSchema: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['save', 'load', 'list', 'delete'], description: 'Action to perform' },
-        sessionName: { type: 'string', description: 'Name of the research session' },
+        sessionName: {
+          type: 'string', pattern: SESSION_NAME_PATTERN.source,
+          description: 'Session name (1–64 ASCII letters, digits, dots, underscores, or hyphens)',
+        },
         content: { type: 'string', description: 'Content to save (for save action)' },
       },
       required: ['action'],
@@ -1092,7 +1096,7 @@ export default class ResearchMCPServer {
   private wikipediaCache: LRUCache<string, any>;
   private googleSearch: any;
   private wikipedia: any;
-  private researchSessions: Map<string, any>;
+  private readonly researchSessions: ResearchSessionStore;
 
   constructor() {
     this.server = new Server(
@@ -1119,7 +1123,7 @@ export default class ResearchMCPServer {
       ttl: config.wikipedia.cacheTtl,
     });
 
-    this.researchSessions = new Map();
+    this.researchSessions = new ResearchSessionStore();
 
     this.googleSearch = {
       search: async (params: any) => {
@@ -1431,49 +1435,42 @@ export default class ResearchMCPServer {
     }
   }
 
-  private async manageResearchSession(action: string, sessionName?: string, content?: string): Promise<string> {
-    // Simple in-memory session storage (in production, this would use persistent storage)
-    if (!this.researchSessions) {
-      this.researchSessions = new Map();
+  private async manageResearchSession(action: unknown, sessionName: unknown, content: unknown): Promise<string> {
+    await this.researchSessions.ready;
+    if (action === 'list') {
+      const sessions = [...(await this.researchSessions.read()).keys()];
+      return `Available research sessions:\n${sessions.length > 0 ? sessions.map(name => `- ${name}`).join('\n') : 'No sessions found.'}`;
+    }
+
+    if (action !== 'save' && action !== 'load' && action !== 'delete') {
+      throw new Error('Expected one of the actions save, load, list, or delete.');
+    }
+    if (typeof sessionName !== 'string' || !SESSION_NAME_PATTERN.test(sessionName)) {
+      throw new Error('Session name must contain 1–64 ASCII letters, digits, dots, underscores, or hyphens.');
     }
 
     switch (action) {
       case 'save':
-        if (!sessionName || !content) {
-          throw new Error('Session name and content required for save action');
+        if (typeof content !== 'string' || content.length === 0) {
+          throw new Error('Nonempty session content is required for save.');
         }
-        this.researchSessions.set(sessionName, {
-          content,
-          timestamp: new Date().toISOString(),
-        });
+        await this.researchSessions.update(sessions => sessions.set(sessionName, content));
         return `Research session "${sessionName}" saved successfully.`;
 
       case 'load':
-        if (!sessionName) {
-          throw new Error('Session name required for load action');
-        }
-        const session = this.researchSessions.get(sessionName);
-        if (!session) {
+        const session = (await this.researchSessions.read()).get(sessionName);
+        if (session === undefined) {
           throw new Error(`Research session "${sessionName}" not found.`);
         }
-        return `Research session "${sessionName}" loaded:\n\n${session.content}`;
-
-      case 'list':
-        const sessions = Array.from(this.researchSessions.keys());
-        return `Available research sessions:\n${sessions.length > 0 ? sessions.map(name => `- ${name}`).join('\n') : 'No sessions found.'}`;
+        return `Research session "${sessionName}" loaded:\n\n${session}`;
 
       case 'delete':
-        if (!sessionName) {
-          throw new Error('Session name required for delete action');
-        }
-        if (this.researchSessions.delete(sessionName)) {
-          return `Research session "${sessionName}" deleted successfully.`;
-        } else {
-          throw new Error(`Research session "${sessionName}" not found.`);
-        }
-
-      default:
-        throw new Error(`Unknown action: ${action}`);
+        await this.researchSessions.update(sessions => {
+          if (!sessions.delete(sessionName)) {
+            throw new Error(`Research session "${sessionName}" not found.`);
+          }
+        });
+        return `Research session "${sessionName}" deleted successfully.`;
     }
   }
 
@@ -9586,15 +9583,21 @@ Develop and execute a strategic research networking approach to build valuable c
             }
 
           case 'research_session_manager':
-            const { action, sessionName, content: sessionContent } = args as any;
+            const { action, sessionName, content: sessionContent } = args;
             try {
               const result = await this.manageResearchSession(action, sessionName, sessionContent);
               return {
                 content: [{ type: 'text', text: result }],
               };
             } catch (error) {
+              const reason = error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+                ? error.message
+                : 'Unknown error';
+              const failure = { ok: false, reason };
               return {
-                content: [{ type: 'text', text: `Session management failed: ${error instanceof Error ? error.message : 'Unknown error'}` }],
+                isError: true,
+                structuredContent: failure,
+                content: [{ type: 'text', text: JSON.stringify(failure) }],
               };
             }
 
@@ -9822,6 +9825,7 @@ Develop and execute a strategic research networking approach to build valuable c
   }
 
   async run() {
+    await this.researchSessions.ready;
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
 
