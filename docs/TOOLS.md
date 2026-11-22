@@ -18,7 +18,7 @@ Format citations in APA, MLA, or Chicago style
 
 ## `content_deduplication`
 
-Remove duplicate content from search results and consolidate similar items
+Deduplicate structured `{title, url, snippet}` items by canonical URL and title similarity; returns surviving objects plus a `mergedFrom` list as JSON
 
 ## `content_sentiment_analysis`
 
@@ -26,7 +26,7 @@ Analyze sentiment of text content using built-in sentiment analysis
 
 ## `content_summarizer`
 
-Summarize content from multiple URLs
+Summarize content from multiple URLs, preferring og:description or the first main-content paragraph over raw body text
 
 ## `data_export`
 
@@ -38,7 +38,7 @@ Canonical content extraction: fetch a URL and extract its main content. Use hela
 
 ## `fact_checker`
 
-Verify claims by searching for fact-checking sources
+Check a claim against fact-checking sources: labels each source stance and derives an overall verdict (ClaimReview ratings when available, otherwise source wording)
 
 ## `google_search`
 
@@ -50,7 +50,7 @@ Extract key terms and topics from text content
 
 ## `multi_site_search`
 
-Search across multiple specific websites simultaneously
+Search across multiple specific websites simultaneously and report a per-site result count
 
 ## `news_monitor`
 
@@ -58,7 +58,7 @@ Monitor news and get alerts for specific topics
 
 ## `research_assistant`
 
-Comprehensive research assistant with multi-query analysis
+Multi-angle research assistant: runs several query variants, deduplicates identical results across them, and includes URLs
 
 ## `research_brief`
 

@@ -267,6 +267,19 @@ function cleanSnippet(value: unknown): string {
   return String(value ?? 'No snippet available').replace(/<[^>]+>/g, '').trim();
 }
 
+/**
+ * Remove empty parentheses left behind when a pronunciation fragment is
+ * stripped from a Wikipedia extract, then repair the resulting double spaces.
+ */
+export function stripEmptyParentheses(value: string): string {
+  return String(value ?? '')
+    .replace(/\(\s*\)/g, '')
+    .replace(/（\s*）/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .trim();
+}
+
 function missingSummary(title: string, lang: string): string {
   return `Summary for Wikipedia page "${title}" not found (${lang}).`;
 }
@@ -299,14 +312,16 @@ export async function runWikipediaGet(
         );
         const page = firstPage(payload);
         if (isMissingPage(page)) return textResult(missingSummary(plan.title, plan.lang));
-        return textResult(`Summary for "${plan.title}":\n\n${page.extract || 'No summary available'}`);
+        return textResult(`Summary for "${plan.title}":\n\n${stripEmptyParentheses(page.extract || 'No summary available')}`);
       }
       const payload = await deps.getPage(plan.title, { lang: plan.lang });
       const page = firstPage(payload);
       if (isMissingPage(page)) {
         return textResult(`Wikipedia page "${plan.title}" not found.`);
       }
-      const content = deps.cleanContent(page.extract || 'No content available').substring(0, 2000);
+      const content = stripEmptyParentheses(
+        deps.cleanContent(page.extract || 'No content available')
+      ).substring(0, 2000);
       return textResult(`**${page.title || plan.title}**\n\n${content}...`);
     } catch (error) {
       return textResult(`Failed to get Wikipedia page: ${errorText(error)}`);
@@ -332,14 +347,16 @@ export async function runWikipediaGet(
         if (isMissingPage(page)) {
           return textResult(`Summary for Wikipedia page ID ${plan.pageId} not found.`);
         }
-        return textResult(`Summary for "${page.title}":\n\n${page.extract || 'No summary available'}`);
+        return textResult(`Summary for "${page.title}":\n\n${stripEmptyParentheses(page.extract || 'No summary available')}`);
       }
       const payload = await deps.getPageById(plan.pageId, { lang: plan.lang });
       const page = firstPage(payload);
       if (isMissingPage(page)) {
         return textResult(`Wikipedia page with ID ${plan.pageId} not found.`);
       }
-      const content = deps.cleanContent(page.extract || 'No content available').substring(0, 2000);
+      const content = stripEmptyParentheses(
+        deps.cleanContent(page.extract || 'No content available')
+      ).substring(0, 2000);
       return textResult(`**${page.title || `ID ${plan.pageId}`}**\n\n${content}...`);
     } catch (error) {
       return textResult(`Failed to get Wikipedia page by ID: ${errorText(error)}`);
@@ -365,7 +382,7 @@ export async function runWikipediaGet(
         const page = firstPage(payload);
         results.push(
           !isMissingPage(page)
-            ? { title, ok: true, text: page.extract || 'No summary available' }
+            ? { title, ok: true, text: stripEmptyParentheses(page.extract || 'No summary available') }
             : { title, ok: false, text: 'Page not found' }
         );
       } else {
@@ -376,7 +393,9 @@ export async function runWikipediaGet(
             ? {
                 title: page.title || title,
                 ok: true,
-                text: deps.cleanContent(page.extract || 'No content').substring(0, 500),
+                text: stripEmptyParentheses(
+                  deps.cleanContent(page.extract || 'No content')
+                ).substring(0, 500),
               }
             : { title, ok: false, text: 'Page not found' }
         );

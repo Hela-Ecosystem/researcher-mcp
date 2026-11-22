@@ -40,6 +40,16 @@ import { formatPriorsLine, resolveRouting } from './src/sourcePriors.js';
 import { ResearchSessionStore, SESSION_NAME_PATTERN } from './src/researchSessionStore.js';
 import { inSearchTimeWindow, matchesSearchPhrase, searchTimeWindow, type DateRestriction, type SearchTimeWindow } from './src/searchTimeWindow.js';
 import { citationFormatterTool, formatCitation } from './src/citationFormatter.js';
+import {
+  buildFactCheckReport,
+  countResultsBySite,
+  dedupeResearchSections,
+  deduplicateContentItems,
+  extractSummaryFromHtml,
+  fetchClaimReviews,
+  summarizePlainText,
+  type FactCheckSourceInput,
+} from './src/contentTools.js';
 
 // Research Prompt Definitions - Rich Library for Research Workflows
 export const researchPrompts: Prompt[] = [
@@ -723,7 +733,7 @@ const tools = [
   },
   {
     name: 'content_deduplication',
-    description: 'Remove duplicate content from search results and consolidate similar items',
+    description: 'Deduplicate structured {title, url, snippet} items by canonical URL and title similarity; returns surviving objects plus a mergedFrom list as JSON',
     inputSchema: {
       type: 'object',
       properties: {
@@ -790,7 +800,7 @@ const tools = [
   },
   {
     name: 'multi_site_search',
-    description: 'Search across multiple specific websites simultaneously',
+    description: 'Search across multiple specific websites simultaneously and report a per-site result count',
     inputSchema: {
       type: 'object',
       properties: {
@@ -835,7 +845,7 @@ const tools = [
   },
   {
     name: 'content_summarizer',
-    description: 'Summarize content from multiple URLs',
+    description: 'Summarize content from multiple URLs, preferring og:description or the first main-content paragraph over raw body text',
     inputSchema: {
       type: 'object',
       properties: {
@@ -847,7 +857,7 @@ const tools = [
   },
   {
     name: 'fact_checker',
-    description: 'Verify claims by searching for fact-checking sources',
+    description: 'Check a claim against fact-checking sources: labels each source stance and derives an overall verdict (ClaimReview ratings when available, otherwise source wording)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -858,7 +868,7 @@ const tools = [
   },
   {
     name: 'research_assistant',
-    description: 'Comprehensive research assistant with multi-query analysis',
+    description: 'Multi-angle research assistant: runs several query variants, deduplicates identical results across them, and includes URLs',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1504,41 +1514,6 @@ export default class ResearchMCPServer {
         });
         return `Research session "${sessionName}" deleted successfully.`;
     }
-  }
-
-  private deduplicateContent(content: any[], threshold: number): any[] {
-    const unique: any[] = [];
-
-    content.forEach(item => {
-      let isDuplicate = false;
-      for (const existing of unique) {
-        if (this.calculateSimilarity(item, existing) > threshold) {
-          isDuplicate = true;
-          break;
-        }
-      }
-      if (!isDuplicate) {
-        unique.push(item);
-      }
-    });
-
-    return unique;
-  }
-
-  private calculateSimilarity(item1: any, item2: any): number {
-    // Simple similarity based on title/text overlap
-    const text1 = (item1.title || item1.text || '').toLowerCase();
-    const text2 = (item2.title || item2.text || '').toLowerCase();
-
-    if (!text1 || !text2) return 0;
-
-    const words1 = new Set(text1.split(/\s+/));
-    const words2 = new Set(text2.split(/\s+/));
-
-    const intersection = new Set([...words1].filter(x => words2.has(x)));
-    const union = new Set([...words1, ...words2]);
-
-    return intersection.size / union.size;
   }
 
   private async searchArchiveOrg(url: string, year?: number): Promise<any[]> {
@@ -9025,12 +9000,19 @@ Develop and execute a strategic research networking approach to build valuable c
                 }))
                 .filter((item: any) => item.score >= GOOGLE_RELEVANCE_FLOOR)
                 .sort((a: any, b: any) => b.score - a.score);
+              const perSite = countResultsBySite(items, multiSites);
+              const perSiteLine = perSite.map((entry) =>
+                `${entry.site}: ${entry.count}${entry.count === 0 ? ' (no results)' : ''}`
+              ).join(', ');
               return {
                 content: [{
                   type: 'text',
-                  text: `Multi-site search results for "${multiQuery}" across ${multiSites.join(', ')} (${formatPriorsLine(routing)}):\n\n${items.map((item: any, index: number) =>
-                    `${index + 1}. **${item.title}** (score: ${formatScore(item.score)})\n   ${item.snippet}\n   ${item.link}\n   Site: ${item.displayLink}`
-                  ).join('\n')}`,
+                  text: `Multi-site search results for "${multiQuery}" across ${multiSites.join(', ')} (${formatPriorsLine(routing)}):\n` +
+                    `Per-site results: ${perSiteLine || 'none'}\n\n${items.length === 0
+                      ? 'No results found.'
+                      : items.map((item: any, index: number) =>
+                        `${index + 1}. **${item.title}** (score: ${formatScore(item.score)})\n   ${item.snippet}\n   ${item.link}\n   Site: ${item.displayLink}`
+                      ).join('\n')}`,
                 }],
               };
             } catch (error) {
@@ -9150,37 +9132,38 @@ Develop and execute a strategic research networking approach to build valuable c
               const summaries = await mapAll(urls.slice(0, 5), 3, async (url: string) => {
                 try {
                   let title = '';
-                  let content = '';
+                  let summary = '';
+                  let source = 'body';
+
                   try {
                     const response = await axios.get(url, {
                       timeout: 8000,
                       headers: { 'User-Agent': config.userAgent },
                     });
-                    const $ = cheerio.load(response.data);
-                    $('script, style, nav, header, footer, aside, .ad, .advertisement').remove();
-
-                    title = $('title').text().trim() || 'No title';
-                    content = $('body').text().trim().replace(/\s+/g, ' ');
+                    const extracted = extractSummaryFromHtml(String(response.data), maxLength);
+                    title = extracted.title;
+                    summary = extracted.summary;
+                    source = extracted.source;
                   } catch {
                     // Direct fetch failed, fall back to freeExtract
                   }
 
-                  if (!content || content.length < 60) {
+                  if (!summary || summary.length < 60) {
                     try {
                       const extracted = await freeExtract(url);
                       if (extracted.content) {
+                        const fallback = summarizePlainText(extracted.content, maxLength);
                         title = extracted.title || title || 'Summary';
-                        content = extracted.content;
+                        summary = fallback.summary;
+                        source = 'jina';
                       }
                     } catch {
                       /* Jina extraction fallback failed */
                     }
                   }
 
-                  if (!content) return { url, error: 'Failed to extract content' };
-
-                  content = content.substring(0, maxLength * 2);
-                  return { url, title, summary: content.substring(0, maxLength) + '...' };
+                  if (!summary) return { url, error: 'Failed to extract content' };
+                  return { url, title: title || 'Summary', summary, source };
                 } catch (error) {
                   return { url, error: 'Failed to extract content' };
                 }
@@ -9192,7 +9175,7 @@ Develop and execute a strategic research networking approach to build valuable c
                   text: `Content summaries for ${summaries.length} URLs:\n\n${summaries.map((item, index) =>
                     item.error
                       ? `${index + 1}. ${item.url}: ${item.error}`
-                      : `${index + 1}. **${item.title}**\n   ${item.summary}`
+                      : `${index + 1}. **${item.title}** (${item.source})\n   ${item.url}\n   ${item.summary}`
                   ).join('\n\n')}`,
                 }],
               };
@@ -9203,29 +9186,62 @@ Develop and execute a strategic research networking approach to build valuable c
             }
           }
 
-          case 'fact_checker':
+          case 'fact_checker': {
             const { claim } = args as any;
             try {
-              // Search for the claim and related fact-checking
-              const searchResults = await this.googleSearch.search({
-                q: `${claim} fact check OR verification OR debunk`,
-                num: 5,
-              });
+              let sourceRows: FactCheckSourceInput[] = [];
+              let usedClaimReview = false;
 
-              const items = searchResults.items || [];
-              const analysis = items.map((item: any) => ({
-                title: item.title,
-                source: item.displayLink,
-                snippet: item.snippet,
-                url: item.link,
-              }));
+              if (config.google.apiKey) {
+                try {
+                  const reviews = await fetchClaimReviews(String(claim), config.google.apiKey);
+                  if (reviews.length > 0) {
+                    usedClaimReview = true;
+                    sourceRows = reviews.map((review) => ({
+                      title: review.title,
+                      url: review.url,
+                      source: review.publisher,
+                      snippet: review.snippet,
+                      rating: review.rating,
+                      reviewDate: review.reviewDate,
+                    }));
+                  }
+                } catch {
+                  // ClaimReview API unavailable or not enabled for this key; fall back to search wording.
+                }
+              }
+
+              if (!usedClaimReview) {
+                const searchResults = await this.googleSearch.search({
+                  q: `${claim} fact check OR verification OR debunk`,
+                  num: 5,
+                });
+                sourceRows = (searchResults.items || []).map((item: any) => ({
+                  title: item.title,
+                  url: item.link,
+                  source: item.displayLink,
+                  snippet: item.snippet,
+                }));
+              }
+
+              const report = buildFactCheckReport(String(claim), sourceRows);
+              const sourceLines = report.sources.length === 0
+                ? 'No fact-checking sources found.'
+                : report.sources.map((source, index) =>
+                  `${index + 1}. **${source.title}** [${source.stance}]\n` +
+                  `   Source: ${source.source}${source.rating ? ` (rating: ${source.rating})` : ''}\n` +
+                  `   ${source.snippet}\n   ${source.url}`
+                ).join('\n\n');
 
               return {
+                structuredContent: report,
                 content: [{
                   type: 'text',
-                  text: `Fact-check analysis for: "${claim}"\n\nFound ${analysis.length} relevant sources:\n\n${analysis.map((item: any, index: number) =>
-                    `${index + 1}. **${item.title}**\n   Source: ${item.source}\n   ${item.snippet}\n   ${item.url}`
-                  ).join('\n\n')}`,
+                  text: `Fact-check analysis for: "${claim}"\n` +
+                    `Overall verdict: ${report.verdict} (${report.counts.supports} supports, ` +
+                    `${report.counts.refutes} refutes, ${report.counts.mixed} mixed, ${report.counts.unclear} unclear)\n` +
+                    `${usedClaimReview ? 'Ratings from Google ClaimReview.' : 'Stances inferred from source wording; treat them as signals, not publisher ratings.'}\n\n` +
+                    sourceLines,
                 }],
               };
             } catch (error) {
@@ -9233,8 +9249,9 @@ Develop and execute a strategic research networking approach to build valuable c
                 content: [{ type: 'text', text: `Fact checking failed: ${error instanceof Error ? error.message : 'Unknown error'}` }],
               };
             }
+          }
 
-          case 'research_assistant':
+          case 'research_assistant': {
             const { researchTopic, researchType = 'comprehensive', depth = 'standard' } = args as any;
             try {
               const queries = [
@@ -9254,14 +9271,19 @@ Develop and execute a strategic research networking approach to build valuable c
                 }
               });
 
+              const deduped = dedupeResearchSections(results);
+              const sections = deduped.sections.map((section) => {
+                const lines = section.items.length > 0
+                  ? section.items.map((item) => `• ${item.title}\n   ${item.url}\n   ${item.domain}`).join('\n')
+                  : 'No unique results (duplicates from an earlier query removed).';
+                return `**${section.query}**\n${lines}`;
+              }).join('\n\n');
+
               return {
                 content: [{
                   type: 'text',
-                  text: `Research Assistant - ${researchTopic} (${researchType}, ${depth} depth)\n\n${results.map((section, index) =>
-                    `**${section.query}**\n${section.results.map((item: any) =>
-                      `• ${item.title} (${item.displayLink})`
-                    ).join('\n')}`
-                  ).join('\n\n')}`,
+                  text: `Research Assistant - ${researchTopic} (${researchType}, ${depth} depth)\n` +
+                    `${deduped.duplicatesRemoved} duplicate result(s) removed across queries.\n\n${sections}`,
                 }],
               };
             } catch (error) {
@@ -9269,6 +9291,7 @@ Develop and execute a strategic research networking approach to build valuable c
                 content: [{ type: 'text', text: `Research assistant failed: ${error instanceof Error ? error.message : 'Unknown error'}` }],
               };
             }
+          }
 
           case 'research_brief': {
             const { query: briefQuery, num: briefNum = 5, lang: briefLang = 'en' } = args as any;
@@ -9615,27 +9638,36 @@ Develop and execute a strategic research networking approach to build valuable c
               };
             }
 
-          case 'content_deduplication':
+          case 'content_deduplication': {
             const { content: dupContent, similarityThreshold = 0.8 } = args as any;
-            try {
-              const deduplicated = this.deduplicateContent(dupContent, similarityThreshold);
+            if (!Array.isArray(dupContent)) {
               return {
-                content: [{
-                  type: 'text',
-                  text: `Deduplication Results:\n\n` +
-                        `Original items: ${dupContent.length}\n` +
-                        `Unique items: ${deduplicated.length}\n` +
-                        `Duplicates removed: ${dupContent.length - deduplicated.length}\n\n` +
-                        `Unique Content:\n${deduplicated.map((item: any, index: number) =>
-                          `${index + 1}. ${item.title || item.text || 'Untitled'}`
-                        ).join('\n')}`,
-                }],
+                isError: true,
+                content: [{ type: 'text', text: 'content_deduplication requires content to be an array of {title, url, snippet} objects.' }],
+              };
+            }
+            try {
+              const { unique, mergedFrom } = deduplicateContentItems(dupContent, similarityThreshold);
+              const report = {
+                stats: {
+                  original: dupContent.length,
+                  unique: unique.length,
+                  duplicatesRemoved: mergedFrom.length,
+                  similarityThreshold,
+                },
+                unique,
+                mergedFrom,
+              };
+              return {
+                structuredContent: report,
+                content: [{ type: 'text', text: JSON.stringify(report, null, 2) }],
               };
             } catch (error) {
               return {
                 content: [{ type: 'text', text: `Content deduplication failed: ${error instanceof Error ? error.message : 'Unknown error'}` }],
               };
             }
+          }
 
           case 'archive_org_search':
             const { url: archiveUrl, year: archiveYear } = args as any;

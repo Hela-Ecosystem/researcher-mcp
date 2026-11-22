@@ -114,7 +114,7 @@ Built-in analysis capabilities that work without external dependencies:
 - `url_metadata_extractor` - Extract metadata from URLs including title, description, and basic info
 - `citation_formatter` - Format citations in APA, MLA, or Chicago style
 - `research_session_manager` - Manage research sessions, save findings, and organize notes
-- `content_deduplication` - Remove duplicate content from search results and consolidate similar items
+- `content_deduplication` - Deduplicate structured `{title, url, snippet}` items by canonical URL (utm/fragment/trailing slash stripped) and title similarity; returns survivors plus a `mergedFrom` list as JSON
 - `archive_org_search` - Search archived web pages on Archive.org (Wayback Machine)
 - `data_export` - Export research data in various formats (JSON, CSV, Markdown)
 
@@ -127,12 +127,12 @@ Web search, academic discovery, news monitoring, and intelligence capabilities w
 - `google_search` - Search the web with Google Custom Search or automatic keyless multi-engine fallback (DuckDuckGo, Bing, etc.)
 - `extract_content` - Extract clean content from web pages with automatic Jina Reader fallback for SPAs/anti-bot sites
 - `search_analytics` - Analyze search trends and domain distribution across multiple queries
-- `multi_site_search` - Search across multiple specific domains simultaneously
+- `multi_site_search` - Search across multiple specific websites simultaneously and report a per-site result count
 - `news_monitor` - Live news monitor using Google News public RSS feeds (zero keys required)
 - `academic_search` - Search academic papers and preprints via arXiv OpenSearch API (zero keys required)
-- `content_summarizer` - Multi-URL content extractor and summarizer with Jina reader fallback
-- `fact_checker` - Verify claims by searching and cross-referencing verification sources
-- `research_assistant` - Comprehensive multi-angle research assistant
+- `content_summarizer` - Multi-URL content extractor and summarizer; prefers og:description or the first main paragraph and strips page chrome
+- `fact_checker` - Check a claim against fact-checking sources, label each source stance, and derive an overall verdict
+- `research_assistant` - Multi-angle research assistant with cross-query deduplication and URLs
 - `search_trends` - Track search and community interest trends with Hacker News Algolia integration
 - `research_brief` - Fast multi-source brief: parallel Google/web + Wikipedia fan-out, cross-source dedup, exact-match ranking
 
@@ -360,7 +360,7 @@ The server provides the following 29 comprehensive research tools (all available
 - `url_metadata_extractor` - Extract metadata from URLs including title, description, and basic info
 - `citation_formatter` - Format citations in APA, MLA, or Chicago style
 - `research_session_manager` - Manage research sessions, save findings, and organize notes
-- `content_deduplication` - Remove duplicate content from search results and consolidate similar items
+- `content_deduplication` - Deduplicate structured `{title, url, snippet}` items by canonical URL (utm/fragment/trailing slash stripped) and title similarity; returns survivors plus a `mergedFrom` list as JSON
 - `archive_org_search` - Search archived web pages on Archive.org (Wayback Machine)
 - `data_export` - Export research data in various formats (JSON, CSV, Markdown)
 
@@ -369,12 +369,12 @@ The server provides the following 29 comprehensive research tools (all available
 - `google_search` - Search the web with Google Custom Search API or keyless parallel fallback
 - `extract_content` - Extract main content from web pages (with automatic Jina Reader fallback)
 - `search_analytics` - Analyze search trends and get domain distribution insights
-- `multi_site_search` - Search across multiple specific websites simultaneously
+- `multi_site_search` - Search across multiple specific websites simultaneously, with per-site result counts
 - `news_monitor` - Real-time news monitor via Google News public RSS feeds
 - `academic_search` - Search academic papers via arXiv OpenSearch API
-- `content_summarizer` - Summarize content from multiple URLs with Jina reader fallback
-- `fact_checker` - Verify claims by searching and cross-referencing verification sources
-- `research_assistant` - Comprehensive research assistant with multi-query analysis
+- `content_summarizer` - Summarize content from multiple URLs, preferring og:description or the first main paragraph over raw body text
+- `fact_checker` - Check a claim against fact-checking sources, label each source stance, and derive an overall verdict
+- `research_assistant` - Multi-angle research assistant with cross-query deduplication and URLs
 - `search_trends` - Track search interest trends and Hacker News community metrics
 - `research_brief` - One-call brief: parallel Google/web + Wikipedia fan-out, cross-source dedup, exact-match ranking
 

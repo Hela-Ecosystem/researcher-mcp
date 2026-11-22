@@ -253,6 +253,18 @@ describe('runWikipediaGet', () => {
     );
   });
 
+  test('removes empty parentheses left behind by a stripped pronunciation', async () => {
+    const request = jest.fn().mockResolvedValue(
+      pagePayload({ 1: { title: 'HeLa', extract: 'The HeLa () Cell Line is an immortal cell line.' } })
+    );
+    const deps = makeDeps({ request });
+    const result = await runWikipediaGet({ title: 'HeLa', format: 'summary' }, deps);
+    expect(result.content[0].text).toBe(
+      'Summary for "HeLa":\n\nThe HeLa Cell Line is an immortal cell line.'
+    );
+    expect(result.content[0].text).not.toContain('()');
+  });
+
   test('reads full pages by ID', async () => {
     const deps = makeDeps({
       getPageById: jest.fn().mockResolvedValue(pagePayload({ 42: { title: 'Answer', extract: 'Forty two.' } })),
