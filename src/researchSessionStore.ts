@@ -62,7 +62,7 @@ export class ResearchSessionStore {
     const release = await lockfile.lock(this.path, {
       realpath: false,
       retries: { retries: 25, minTimeout: 25, maxTimeout: 500 },
-      onCompromised: error => { compromised = error; },
+      onCompromised: (error: Error) => { compromised = error; },
     });
 
     try {
@@ -94,7 +94,7 @@ export class ResearchSessionStore {
       }
       this.snapshot = { serialized, sessions };
     } finally {
-      await release().catch(error => console.error('Could not release research session store lock:', error.message));
+      await release().catch((error: unknown) => console.error('Could not release research session store lock:', error instanceof Error ? error.message : String(error)));
     }
   }
 }
