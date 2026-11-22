@@ -1,3 +1,14 @@
+## [4.3.0] - 2026-11-22
+
+### Changed
+- `search_trends` and `search_analytics` no longer report result-page counts as search interest. They state the UTC window they applied, report a Google matching-page estimate only when CSE provides one, and otherwise say the series is unavailable. (`researcher-mcp#39`)
+
+### Fixed
+- `data_export` CSV escapes quotes (round-trip through a strict reader works), prefixes string fields starting with `= + - @ TAB CR` so a spreadsheet cannot execute them, and accepts a bare array or `{rows:[...]}` as well as an object. Numeric negatives stay numbers. (`researcher-mcp#40`)
+- `research_session_manager` persists to disk: atomic write (temp + fsync + rename), `proper-lockfile` around read-modify-write, `HELA_RESEARCH_SESSION_DIR` or XDG data home, `0600` file and `0700` directory, 100-session/8 MiB caps, and `ok:false` with a reason when a save cannot be honoured. A corrupt store is reported and left untouched. (`researcher-mcp#42`)
+- `news_monitor` enforces `dateRestrict`: the window is applied to the feed query and to each item, the response states it, and out-of-window articles are counted as dropped. RSS entities are decoded and Google News redirect links resolve to the publisher (or its home) instead of a wrapper. (`researcher-mcp#41`)
+- `research_brief` folds morphological variants and weights terms by rarity among the pages it actually returned. (`researcher-mcp#36`)
+
 ## [4.2.2] - 2026-11-22
 
 ### Fixed
