@@ -717,7 +717,10 @@ const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        data: { type: 'object', description: 'Data to export' },
+        data: {
+          anyOf: [{ type: 'object' }, { type: 'array' }],
+          description: 'Data to export. For CSV, pass an array of rows or an object with a rows array.',
+        },
         format: { type: 'string', enum: ['json', 'csv', 'markdown', 'txt'], description: 'Export format', default: 'json' },
         filename: { type: 'string', description: 'Suggested filename' },
       },
@@ -1537,21 +1540,40 @@ export default class ResearchMCPServer {
     }
   }
 
+  private formatCsvCell(value: unknown, alwaysQuote = false): string {
+    const text = String(value ?? '');
+    // Guard formula leading characters only on strings: a numeric -5 is a number, not
+    // a formula, and prefixing it would silently turn it into text.
+    const safeText = typeof value === 'string' && /^[=+@\t\r-]/.test(text) ? `'${text}` : text;
+    return alwaysQuote || /[",\r\n]/.test(safeText)
+      ? `"${safeText.replaceAll('"', '""')}"`
+      : safeText;
+  }
+
   private exportData(data: any, format: string): string {
     switch (format.toLowerCase()) {
       case 'json':
         return JSON.stringify(data, null, 2);
 
-      case 'csv':
-        if (Array.isArray(data) && data.length > 0) {
-          const headers = Object.keys(data[0]);
-          const csvRows = [
-            headers.join(','),
-            ...data.map(row => headers.map(header => `"${row[header] || ''}"`).join(','))
-          ];
-          return csvRows.join('\n');
+      case 'csv': {
+        const rows: unknown = Array.isArray(data) ? data : data?.rows;
+        if (!Array.isArray(rows) || rows.length === 0) {
+          return 'Data is not an array or is empty';
         }
-        return 'Data is not an array or is empty';
+        if (!rows.every((row): row is Record<string, unknown> => row !== null && typeof row === 'object')) {
+          throw new Error('CSV rows must be objects or arrays');
+        }
+
+        const headers = Object.keys(rows[0]);
+        const csvRows = [
+          headers.map(header => this.formatCsvCell(header)).join(','),
+          ...rows.map(row => headers.map(header => {
+            const value = Object.hasOwn(row, header) ? row[header] : undefined;
+            return this.formatCsvCell(value, true);
+          }).join(',')),
+        ];
+        return csvRows.join('\n');
+      }
 
       case 'markdown':
         if (Array.isArray(data)) {
