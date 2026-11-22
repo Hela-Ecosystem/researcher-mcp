@@ -66,17 +66,17 @@ One-call research brief: fans out to Google + Wikipedia in parallel, dedups cros
 
 ## `research_session_manager`
 
-Manage research sessions, save findings, and organize notes
+Save, load, list, and delete research sessions stored on disk
 
 Actions: `save`, `load`, `list`, `delete`.
 
 ## `search_analytics`
 
-Analyze search trends and get insights from multiple search queries
+Find relevant web sources in a date window and show Google matching page estimates when available
 
 ## `search_trends`
 
-Track and analyze search interest trends over time
+Find relevant web and Hacker News evidence in a date window, with Google matching page estimates when available
 
 ## `url_metadata_extractor`
 
