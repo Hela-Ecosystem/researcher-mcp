@@ -1,5 +1,6 @@
 import axios from "axios";
 import * as cheerio from "cheerio";
+import { DAY_MS, inSearchTimeWindow, type SearchTimeWindow } from "./searchTimeWindow.js";
 
 export interface FreeSearchItem {
   title: string;
@@ -22,6 +23,7 @@ export interface NewsItem {
   link: string;
   snippet?: string;
   source: string;
+  sourceUrl?: string;
   pubDate: string;
 }
 
@@ -293,16 +295,20 @@ export async function arxivSearch(
  */
 export async function googleNewsSearch(
   topic: string,
-  opts: { language?: string; country?: string; maxResults?: number } = {}
+  opts: { language?: string; country?: string; maxResults?: number; window?: SearchTimeWindow } = {}
 ): Promise<NewsItem[]> {
   try {
     const lang = opts.language || "en-US";
     const gl = opts.country || "US";
     const limit = opts.maxResults || 5;
     const url = "https://news.google.com/rss/search";
+    const window = opts.window;
+    const q = window
+      ? `"${topic.replaceAll('"', ' ')}" after:${window.from.toISOString().slice(0, 10)} before:${new Date(window.to.getTime() + DAY_MS).toISOString().slice(0, 10)}`
+      : topic;
     const res = await axios.get<string>(url, {
       params: {
-        q: topic,
+        q,
         hl: lang,
         gl,
         ceid: `${gl}:${lang.split("-")[0]}`,
@@ -318,10 +324,12 @@ export async function googleNewsSearch(
       const title = clean($(el).find("title").text());
       const link = clean($(el).find("link").text());
       const pubDate = clean($(el).find("pubDate").text());
+      if (window && !inSearchTimeWindow(pubDate, window)) return;
       const source = clean($(el).find("source").text()) || "News";
+      const sourceUrl = $(el).find("source").attr("url");
       const snippet = clean($(el).find("description").text()).replace(/<[^>]+>/g, "");
       if (title && link) {
-        articles.push({ title, link, pubDate, source, snippet });
+        articles.push({ title, link, pubDate, source, snippet, ...(sourceUrl && { sourceUrl }) });
       }
     });
     return articles;
@@ -335,7 +343,8 @@ export async function googleNewsSearch(
  */
 export async function hackerNewsSearch(
   query: string,
-  maxResults = 5
+  maxResults = 5,
+  window?: SearchTimeWindow
 ): Promise<TechTrendItem[]> {
   try {
     const url = "https://hn.algolia.com/api/v1/search";
@@ -344,6 +353,9 @@ export async function hackerNewsSearch(
         query,
         tags: "story",
         hitsPerPage: maxResults,
+        ...(window && {
+          numericFilters: `created_at_i>=${Math.ceil(window.from.getTime() / 1000)},created_at_i<=${Math.floor(window.to.getTime() / 1000)}`,
+        }),
       },
       headers: { "User-Agent": UA },
       timeout: 10000,
@@ -358,7 +370,7 @@ export async function hackerNewsSearch(
         comments: Number(h.num_comments || 0),
         createdAt: h.created_at || "",
       }))
-      .filter((item) => Boolean(item.title));
+      .filter((item) => item.title && (!window || inSearchTimeWindow(item.createdAt, window)));
   } catch {
     return [];
   }

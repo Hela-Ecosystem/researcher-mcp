@@ -11,6 +11,7 @@ import axiosRetry from 'axios-retry';
 import * as cheerio from 'cheerio';
 import LRUCache from 'lru-cache';
 import Sentiment from 'sentiment';
+import { z } from 'zod';
 import { GOOGLE_SEARCH_TOOL, googleSearchInput } from './src/googleSearchTools.js';
 import { Prompt, GetPromptRequestSchema, ListPromptsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import {
@@ -35,6 +36,7 @@ import {
 import { feedbackHintForUrl, rememberBrief } from './src/briefMemory.js';
 import { formatPriorsLine, resolveRouting } from './src/sourcePriors.js';
 import { ResearchSessionStore, SESSION_NAME_PATTERN } from './src/researchSessionStore.js';
+import { matchesSearchPhrase, searchTimeWindow, type DateRestriction, type SearchTimeWindow } from './src/searchTimeWindow.js';
 
 // Research Prompt Definitions - Rich Library for Research Workflows
 export const researchPrompts: Prompt[] = [
@@ -585,6 +587,42 @@ const config = {
 
 // Shared helpers: caps, dedup, bounded parallelism, quota detection.
 const MAX_RESULTS = 20;
+const TREND_RESTRICTIONS = { '1M': 'm1', '3M': 'm3', '6M': 'm6', '12M': 'm12', '1Y': 'y1', '5Y': 'y5' } as const;
+const ANALYTICS_RESTRICTIONS = { week: 'd7', month: 'm1', year: 'y1' } as const;
+const trendTimeframes = Object.keys(TREND_RESTRICTIONS) as Array<keyof typeof TREND_RESTRICTIONS>;
+const analyticsTimeRanges = Object.keys(ANALYTICS_RESTRICTIONS) as Array<keyof typeof ANALYTICS_RESTRICTIONS>;
+const trendInput = z.object({
+  topics: z.array(z.string().trim().min(1)).min(1).max(5),
+  timeframe: z.enum(trendTimeframes).default('6M'),
+});
+const analyticsInput = z.object({
+  queries: z.array(z.string().trim().min(1)).min(1).max(5),
+  timeRange: z.enum(analyticsTimeRanges).default('month'),
+  maxResults: z.number().optional(),
+});
+const SEARCH_SAMPLE_SIZE = 10;
+
+interface WindowWebItem {
+  title: string;
+  link?: string;
+  snippet?: string;
+  displayLink?: string;
+  publishedAt?: string;
+}
+
+function formatSearchWindow({ from, to }: SearchTimeWindow) {
+  return `Window (UTC): ${from.toISOString()} to ${to.toISOString()}\nSearch interest series unavailable from these sources.`;
+}
+
+function searchDomain(item: WindowWebItem): string {
+  if (item.displayLink) return item.displayLink;
+  try {
+    return new URL(item.link ?? '').hostname;
+  } catch {
+    return 'unknown';
+  }
+}
+
 function clampInt(v: unknown, def: number, min = 1, max = MAX_RESULTS): number {
   const n = typeof v === 'number' ? Math.floor(v) : parseInt(String(v ?? ''), 10);
   if (!Number.isFinite(n)) return def;
@@ -747,13 +785,13 @@ const tools = [
   },
   {
     name: 'search_analytics',
-    description: 'Analyze search trends and get insights from multiple search queries',
+    description: 'Find relevant web sources in a date window and show Google matching page estimates when available',
     inputSchema: {
       type: 'object',
       properties: {
         queries: { type: 'array', items: { type: 'string' }, description: 'Array of search queries to analyze', minItems: 1, maxItems: 5 },
-        timeRange: { type: 'string', enum: ['week', 'month', 'year'], description: 'Time range for trend analysis', default: 'month' },
-        maxResults: { type: 'number', description: 'Maximum results per query', minimum: 1, maximum: 5, default: 3 },
+        timeRange: { type: 'string', enum: analyticsTimeRanges, description: 'Lookback window', default: 'month' },
+        maxResults: { type: 'number', description: 'Maximum sources displayed per query', minimum: 1, maximum: 5, default: 3 },
       },
       required: ['queries'],
     },
@@ -854,12 +892,12 @@ const tools = [
   },
   {
     name: 'search_trends',
-    description: 'Track and analyze search interest trends over time',
+    description: 'Find relevant web and Hacker News evidence in a date window, with Google matching page estimates when available',
     inputSchema: {
       type: 'object',
       properties: {
         topics: { type: 'array', items: { type: 'string' }, description: 'Array of topics to track trends for', minItems: 1, maxItems: 5 },
-        timeframe: { type: 'string', enum: ['1M', '3M', '6M', '1Y'], description: 'Time period to analyze', default: '6M' },
+        timeframe: { type: 'string', enum: trendTimeframes, description: 'Lookback window', default: '6M' },
       },
       required: ['topics'],
     },
@@ -1126,9 +1164,9 @@ export default class ResearchMCPServer {
     this.researchSessions = new ResearchSessionStore();
 
     this.googleSearch = {
-      search: async (params: any) => {
+      search: async (params: any, window?: SearchTimeWindow) => {
         const cacheKey = `google:${JSON.stringify(params)}`;
-        let result = this.googleCache.get(cacheKey);
+        let result = window ? undefined : this.googleCache.get(cacheKey);
         if (result) return result;
 
         if (config.google.apiKey && config.google.cseId) {
@@ -1143,7 +1181,7 @@ export default class ResearchMCPServer {
               timeout: 10000,
             });
             result = response.data;
-            this.googleCache.set(cacheKey, result);
+            if (!window) this.googleCache.set(cacheKey, result);
             return result;
           } catch {
             // Google CSE quota or network failed — fall through to freeSearch
@@ -1152,6 +1190,18 @@ export default class ResearchMCPServer {
 
         const q = String(params?.q || '');
         const num = Number(params?.num || 10);
+        if (window) {
+          const articles = await googleNewsSearch(q, { maxResults: num, window });
+          return {
+            provider: 'news',
+            items: articles.map(article => ({
+              title: article.title,
+              link: article.sourceUrl || article.link,
+              snippet: article.snippet,
+              publishedAt: new Date(article.pubDate).toISOString().slice(0, 10),
+            })),
+          };
+        }
         const freeRes = await freeSearch(q, { maxResults: num });
         const items = freeRes.items.map((item) => {
           let displayLink = item.engine || 'web';
@@ -1271,6 +1321,18 @@ export default class ResearchMCPServer {
     };
 
     this.setupHandlers();
+  }
+
+  private async searchWebInWindow(query: string, dateRestrict: DateRestriction, window: SearchTimeWindow) {
+    const result: { items?: WindowWebItem[]; provider?: string; searchInformation?: { totalResults?: string } } =
+      await this.googleSearch.search({ q: query, exactTerms: query, dateRestrict, num: SEARCH_SAMPLE_SIZE }, window);
+    const items = (result.items ?? []).filter(item => matchesSearchPhrase(query, item.title ?? '', item.snippet ?? ''));
+    const fromCse = result.provider !== 'news';
+    const total = fromCse ? result.searchInformation?.totalResults : undefined;
+    const estimate = total === '0' || (items.length && typeof total === 'string' && /^[1-9]\d*$/.test(total))
+      ? `Google estimated matching pages: ${total}`
+      : 'Matching page total unavailable';
+    return { items, estimate, source: fromCse ? 'Google Custom Search' : 'Google News RSS' };
   }
 
 
@@ -8943,34 +9005,26 @@ Develop and execute a strategic research networking approach to build valuable c
           }
 
           case 'search_analytics': {
-            const { queries: analyticsQueries, timeRange = 'month', maxResults: analyticsMaxRaw = 3 } = args as any;
-            const analyticsMax = clampInt(analyticsMaxRaw, 3, 1, 5);
             try {
-              const analyticsResults = await mapAll(analyticsQueries.slice(0, 5), 3, async (query: string) => {
-                const result = await this.googleSearch.search({ q: query, num: analyticsMax });
-                return {
-                  query,
-                  resultsCount: result.items?.length || 0,
-                  topDomains: result.items?.slice(0, analyticsMax).map((item: any) => {
-                    try {
-                      return new URL(item.link).hostname;
-                    } catch {
-                      return 'unknown';
-                    }
-                  }) || []
-                };
+              const { queries, timeRange, maxResults } = analyticsInput.parse(args);
+              const limit = clampInt(maxResults, 3, 1, 5);
+              const dateRestrict = ANALYTICS_RESTRICTIONS[timeRange];
+              const window = searchTimeWindow(dateRestrict);
+              const results = await mapAll(queries, 3, async (query, index) => {
+                const { items, estimate, source } = await this.searchWebInWindow(query, dateRestrict, window);
+                const domains = items.slice(0, limit).map(searchDomain);
+                return `${index + 1}. "${query}" (${source})\n   ${estimate}\n   ${domains.length ? `Top domains: ${domains.join(', ')}` : 'No relevant sources found in the retrieved sample'}`;
               });
 
               return {
                 content: [{
                   type: 'text',
-                  text: `Search Analytics for ${analyticsResults.length} queries (${timeRange}):\n\n${analyticsResults.map((result, index) =>
-                    `${index + 1}. "${result.query}": ${result.resultsCount} results\n   Top domains: ${result.topDomains.join(', ')}`
-                  ).join('\n\n')}`,
+                  text: `Search Analytics (${timeRange})\n${formatSearchWindow(window)}\n\n${results.join('\n\n')}`,
                 }],
               };
             } catch (error) {
               return {
+                isError: true,
                 content: [{ type: 'text', text: `Search analytics failed: ${error instanceof Error ? error.message : 'Unknown error'}` }],
               };
             }
@@ -9340,54 +9394,32 @@ Develop and execute a strategic research networking approach to build valuable c
           }
 
           case 'search_trends': {
-            const { topics, timeframe = '6M' } = args as any;
             try {
-              const trendsResults = await mapAll(topics.slice(0, 3), 3, async (topic: string) => {
-                const [searchResult, hnItems] = await Promise.all([
-                  this.googleSearch.search({
-                    q: `${topic} trend OR trending`,
-                    dateRestrict: 'm1',
-                    num: 3,
-                  }).catch(() => ({ items: [] })),
-                  hackerNewsSearch(topic, 3).catch(() => []),
+              const { topics, timeframe } = trendInput.parse(args);
+              const dateRestrict = TREND_RESTRICTIONS[timeframe];
+              const window = searchTimeWindow(dateRestrict);
+              const results = await mapAll(topics, 3, async (topic) => {
+                const [web, hnItems] = await Promise.all([
+                  this.searchWebInWindow(topic, dateRestrict, window),
+                  hackerNewsSearch(topic, SEARCH_SAMPLE_SIZE, window),
                 ]);
-
-                const webSources = (searchResult.items || []).slice(0, 3).map((item: any) => ({
-                  title: item.title,
-                  source: item.displayLink || 'web',
-                  date: item.snippet?.match(/\d{1,2} \w+ \d{4}/)?.[0] || 'Recent',
-                }));
-
-                const hnSources = hnItems.map((hn) => ({
-                  title: `${hn.title} (${hn.points} pts, ${hn.comments} comments)`,
-                  source: 'news.ycombinator.com',
-                  date: hn.createdAt ? hn.createdAt.slice(0, 10) : 'Recent',
-                }));
-
-                const allSources = [...webSources, ...hnSources];
-
-                return {
-                  topic,
-                  timeframe,
-                  recentActivity: allSources.length,
-                  topSources: allSources,
-                };
+                const webSources = web.items.slice(0, 3).map(item =>
+                  `• ${item.title} (${searchDomain(item)})${item.publishedAt ? ` - ${item.publishedAt}` : ''}`);
+                const hnSources = hnItems.filter(item => matchesSearchPhrase(topic, item.title)).slice(0, 3).map(item =>
+                  `• ${item.title} (news.ycombinator.com, ${item.points} pts, ${item.comments} comments) - ${item.createdAt.slice(0, 10)}`);
+                const sources = [...webSources, ...hnSources].join('\n');
+                return `**${topic}**\n${web.estimate} (${web.source})\n${sources || 'No relevant sources found in the retrieved sample'}`;
               });
 
               return {
                 content: [{
                   type: 'text',
-                  text: `Search Trends Analysis (${timeframe}):\n\n${trendsResults.map((trend) =>
-                    `**${trend.topic}**\n` +
-                    `Recent activity: ${trend.recentActivity} mentions / discussions\n` +
-                    `Top sources:\n${trend.topSources.map((source: any) =>
-                      `• ${source.title} (${source.source}) - ${source.date}`
-                    ).join('\n')}`
-                  ).join('\n\n')}`,
+                  text: `Search Trends (${timeframe})\n${formatSearchWindow(window)}\n\n${results.join('\n\n')}`,
                 }],
               };
             } catch (error) {
               return {
+                isError: true,
                 content: [{ type: 'text', text: `Search trends failed: ${error instanceof Error ? error.message : 'Unknown error'}` }],
               };
             }
