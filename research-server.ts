@@ -19,6 +19,7 @@ import {
   freeExtract,
   arxivSearch,
   googleNewsSearch,
+  newsAsSearchItems,
   hackerNewsSearch,
   decodeEntities,
   unwrapUrl,
@@ -1193,16 +1194,8 @@ export default class ResearchMCPServer {
         const q = String(params?.q || '');
         const num = Number(params?.num || 10);
         if (window) {
-          const articles = await googleNewsSearch(q, { maxResults: num, window });
-          return {
-            provider: 'news',
-            items: articles.map(article => ({
-              title: article.title,
-              link: article.sourceUrl || article.link,
-              snippet: article.snippet,
-              publishedAt: new Date(article.pubDate).toISOString().slice(0, 10),
-            })),
-          };
+          const articles = await googleNewsSearch(q, { maxResults: num, window, resolveLinks: true });
+          return { provider: 'news', items: newsAsSearchItems(articles) };
         }
         const freeRes = await freeSearch(q, { maxResults: num });
         const items = freeRes.items.map((item) => {

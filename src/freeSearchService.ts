@@ -420,6 +420,21 @@ export async function resolveNewsLinkDetailed(
     : { link: direct, publisherHome: false };
 }
 
+export const PUBLISHER_HOME_NOTE = "publisher home, article URL unavailable";
+
+/** Shape news articles as search items, marking links that are only the publisher home. */
+export function newsAsSearchItems(articles: NewsItem[]) {
+  return articles.map((article) => ({
+    title: article.title,
+    link: article.link,
+    snippet: article.publisherHome
+      ? `(${PUBLISHER_HOME_NOTE}) ${article.snippet ?? ""}`.trim()
+      : article.snippet,
+    publishedAt: new Date(article.pubDate).toISOString().slice(0, 10),
+    ...(article.publisherHome && { publisherHome: true }),
+  }));
+}
+
 /**
  * Free tech trend / community discussion search via Hacker News Algolia API.
  */

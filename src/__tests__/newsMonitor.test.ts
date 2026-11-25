@@ -1,6 +1,6 @@
 jest.mock('axios');
 import axios from 'axios';
-import { decodeEntities, googleNewsSearch, resolveNewsLink, resolveNewsLinkDetailed } from '../freeSearchService';
+import { decodeEntities, googleNewsSearch, newsAsSearchItems, resolveNewsLink, resolveNewsLinkDetailed } from '../freeSearchService';
 import { searchTimeWindow } from '../searchTimeWindow';
 
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -128,5 +128,21 @@ describe('publisher-home marking', () => {
     const [article] = await googleNewsSearch('topic', { maxResults: 1, resolveLinks: true });
     expect(article.link).toBe('https://example.com');
     expect(article.publisherHome).toBe(true);
+  });
+});
+
+describe('google_search news fallback items', () => {
+  const base = { title: 'T', source: 'Example', pubDate: 'Wed, 25 Nov 2026 10:00:00 GMT', snippet: 'Body' };
+
+  test('marks publisher-home links and keeps real article links unmarked', () => {
+    const items = newsAsSearchItems([
+      { ...base, link: 'https://example.com', publisherHome: true },
+      { ...base, link: 'https://example.com/story' },
+    ]);
+    expect(items[0]).toMatchObject({ link: 'https://example.com', publisherHome: true });
+    expect(items[0].snippet).toContain('publisher home, article URL unavailable');
+    expect(items[1].link).toBe('https://example.com/story');
+    expect(items[1].snippet).toBe('Body');
+    expect(items[1]).not.toHaveProperty('publisherHome');
   });
 });

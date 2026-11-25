@@ -154,6 +154,29 @@ describe('fact_checker stances and verdict', () => {
     expect(classifyClaimStance('Cell culture basics', 'Cultured cells are not immortal in general.', claim)).toBe('unclear');
   });
 
+  test('stays unclear when a snippet only discusses the claim', () => {
+    expect(
+      classifyClaimStance(
+        'Henrietta Lacks',
+        'Historians debate whether HeLa cells were taken from Henrietta Lacks without her knowledge in 1951.',
+        claim,
+      ),
+    ).toBe('unclear');
+    expect(
+      classifyClaimStance('Henrietta Lacks', 'Were HeLa cells taken without her knowledge in 1951? Henrietta Lacks story', claim),
+    ).toBe('unclear');
+  });
+
+  test('stays unclear when the claim terms appear without assertion wording', () => {
+    expect(classifyClaimStance('HeLa cells Henrietta Lacks 1951 knowledge taken', 'Documentary trailer', claim)).toBe('unclear');
+  });
+
+  test('supports needs the claim terms plus assertion wording', () => {
+    expect(
+      classifyClaimStance('Henrietta Lacks', 'Researchers confirmed HeLa cells were taken without her knowledge in 1951.', claim),
+    ).toBe('supports');
+  });
+
   test('verdict follows the stances without overreaching', () => {
     const report = buildFactCheckReport(claim, [
       { title: 'Henrietta Lacks', url: 'https://a.example', snippet: 'HeLa cells were taken without her knowledge.' },

@@ -335,6 +335,9 @@ const REFUTE_CUES = /\b(?:false|fake|hoax|debunk(?:ed|s)?|misleading|misinformat
 const SUPPORT_CUES = /\b(?:true|confirmed|accurate|correct|verified|support(?:s|ed)?|factual|legitimate|real)\b/i;
 const MIXED_CUES = /\b(?:mixed|half[- ]true|partly\s+(?:true|false)|partially\s+(?:true|false)|true\s+and\s+false)\b/i;
 
+const ASSERTION_CUES = /\b(?:was|were|is|are|has|had|have|did|confirm(?:s|ed)?|announc(?:es|ed)|stat(?:es|ed)|report(?:s|ed)|show(?:s|ed|n)?|found|prove[sd]?|reveal(?:s|ed)|according\s+to)\b/i;
+const DISCUSSION_CUES = /\b(?:whether|debat(?:e|es|ed|ing)|discuss(?:es|ed|ion|ing)?|question(?:s|ed|ing)?|rumou?rs?|speculat\w*|alleg\w*|claims?\s+that|asks?|why|how|if|might|may|could|controvers\w*)\b|\?/i;
+
 const CLAIM_STOPWORDS = new Set([
   'the', 'and', 'for', 'was', 'were', 'are', 'but', 'that', 'this', 'with', 'from', 'her', 'his', 'its',
   'their', 'has', 'have', 'had', 'been', 'not', 'any', 'all', 'can', 'will', 'who', 'what', 'when', 'than',
@@ -361,8 +364,9 @@ export function mentionsClaim(claim: string, text: string): boolean {
 
 /**
  * Heuristic stance from a result's own wording (used when ClaimReview has no rating).
- * With `claim`, a source that never mentions the claim is `unclear`; one that does is
- * `supports` unless it also carries denial wording (`refutes`) or both (`mixed`).
+ * With `claim`, a source that never mentions the claim is `unclear`. One that does is
+ * `supports` only when it also asserts it (assertion wording, no discussion wording such
+ * as "whether"/"debate"/"?"); denial wording gives `refutes`, both gives `mixed`.
  */
 export function classifyClaimStance(title: string, snippet = '', claim = ''): ClaimStance {
   const text = normalizeWhitespace(`${title} ${snippet}`);
@@ -374,10 +378,13 @@ export function classifyClaimStance(title: string, snippet = '', claim = ''): Cl
 
   const mixed = MIXED_CUES.test(text);
   const refutes = REFUTE_CUES.test(text);
-  const supports = SUPPORT_CUES.test(text) || (mentioned && !refutes && !mixed);
+  const discussing = claimed && DISCUSSION_CUES.test(text);
+  const explicitSupport = SUPPORT_CUES.test(text) && !discussing;
+  const asserted = mentioned && !discussing && !refutes && !mixed && ASSERTION_CUES.test(text);
+  const supports = explicitSupport || asserted;
 
   if (mixed && !refutes && !supports) return 'mixed';
-  if (refutes && supports) return SUPPORT_CUES.test(text) ? 'mixed' : 'refutes';
+  if (refutes && supports) return explicitSupport ? 'mixed' : 'refutes';
   if (refutes) return 'refutes';
   if (supports) return 'supports';
   return 'unclear';
