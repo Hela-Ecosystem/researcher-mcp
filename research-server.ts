@@ -1545,6 +1545,7 @@ export default class ResearchMCPServer {
   }
 
   private formatCsvCell(value: unknown, alwaysQuote = false): string {
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
     const text = String(value ?? '');
     // Guard formula leading characters only on strings: a numeric -5 is a number, not
     // a formula, and prefixing it would silently turn it into text.
@@ -1568,7 +1569,7 @@ export default class ResearchMCPServer {
           throw new Error('CSV rows must be objects or arrays');
         }
 
-        const headers = Object.keys(rows[0]);
+        const headers = [...new Set(rows.flatMap(row => Object.keys(row)))];
         const csvRows = [
           headers.map(header => this.formatCsvCell(header)).join(','),
           ...rows.map(row => headers.map(header => {
