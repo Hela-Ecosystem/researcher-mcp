@@ -1,3 +1,14 @@
+## [4.3.4] - 2026-11-25
+
+### Fixed
+- `news_monitor` marks links that are only the publisher home page ("publisher home, article URL unavailable") instead of presenting them as article URLs. (ISS-72, `researcher-mcp#44`)
+- `google_search` news fallback (date-restricted queries) follows Google News links and marks publisher-home results the same way, via a `publisherHome` flag and a snippet note. (ISS-72, `researcher-mcp#44`)
+- `fact_checker` classifies stance against the claim: a source is `unclear` unless it mentions the claim's key terms, and `supports` additionally needs assertion wording; snippets that merely discuss the claim (whether, debate, questions) stay `unclear`. (ISS-73, `researcher-mcp#44`)
+- `data_export` leaves plain numbers unquoted and builds the column set as the union of all rows. (ISS-74, `researcher-mcp#44`)
+
+### Known limitations
+- ISS-74: preserving input column order could not be reproduced in this repository, so only the plain-number and column-union parts shipped. Column order is not covered by this release. (`researcher-mcp#44`)
+
 ## [4.3.3] - 2026-11-23
 
 ### Changed
