@@ -9241,7 +9241,7 @@ Develop and execute a strategic research networking approach to build valuable c
                   text: `Fact-check analysis for: "${claim}"\n` +
                     `Overall verdict: ${report.verdict} (${report.counts.supports} supports, ` +
                     `${report.counts.refutes} refutes, ${report.counts.mixed} mixed, ${report.counts.unclear} unclear)\n` +
-                    `${usedClaimReview ? 'Ratings from Google ClaimReview.' : 'Stances inferred from source wording; treat them as signals, not publisher ratings.'}\n\n` +
+                    `${usedClaimReview ? 'Ratings from Google ClaimReview.' : 'Stances inferred from source wording (a source that restates the claim without denial counts as supports; one that never mentions it is unclear); treat them as signals, not publisher ratings.'}\n\n` +
                     sourceLines,
                 }],
               };

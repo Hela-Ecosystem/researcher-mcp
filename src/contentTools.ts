@@ -335,17 +335,49 @@ const REFUTE_CUES = /\b(?:false|fake|hoax|debunk(?:ed|s)?|misleading|misinformat
 const SUPPORT_CUES = /\b(?:true|confirmed|accurate|correct|verified|support(?:s|ed)?|factual|legitimate|real)\b/i;
 const MIXED_CUES = /\b(?:mixed|half[- ]true|partly\s+(?:true|false)|partially\s+(?:true|false)|true\s+and\s+false)\b/i;
 
-/** Heuristic stance from a result's own wording (used when ClaimReview has no rating). */
-export function classifyClaimStance(title: string, snippet = ''): ClaimStance {
+const CLAIM_STOPWORDS = new Set([
+  'the', 'and', 'for', 'was', 'were', 'are', 'but', 'that', 'this', 'with', 'from', 'her', 'his', 'its',
+  'their', 'has', 'have', 'had', 'been', 'not', 'any', 'all', 'can', 'will', 'who', 'what', 'when', 'than',
+]);
+
+const stemOf = (word: string): string => word.slice(0, Math.max(4, word.length - 3));
+
+function claimKeyTerms(claim: string): string[] {
+  const words = normalizeWhitespace(claim).toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  return [...new Set(words.filter((word) => word.length > 2 && !CLAIM_STOPWORDS.has(word)))];
+}
+
+/** True when the text carries at least half of the claim's key terms (prefix-stemmed). */
+export function mentionsClaim(claim: string, text: string): boolean {
+  const terms = claimKeyTerms(claim);
+  if (terms.length === 0) return false;
+  const haystack = normalizeWhitespace(text).toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  const matched = terms.filter((term) => {
+    const stem = stemOf(term);
+    return haystack.some((word) => (term.length < 4 ? word === term : word.startsWith(stem)));
+  });
+  return matched.length >= Math.min(2, terms.length) && matched.length / terms.length >= 0.5;
+}
+
+/**
+ * Heuristic stance from a result's own wording (used when ClaimReview has no rating).
+ * With `claim`, a source that never mentions the claim is `unclear`; one that does is
+ * `supports` unless it also carries denial wording (`refutes`) or both (`mixed`).
+ */
+export function classifyClaimStance(title: string, snippet = '', claim = ''): ClaimStance {
   const text = normalizeWhitespace(`${title} ${snippet}`);
   if (!text) return 'unclear';
 
+  const claimed = normalizeWhitespace(claim) !== '';
+  const mentioned = claimed && mentionsClaim(claim, text);
+  if (claimed && !mentioned) return 'unclear';
+
   const mixed = MIXED_CUES.test(text);
   const refutes = REFUTE_CUES.test(text);
-  const supports = SUPPORT_CUES.test(text);
+  const supports = SUPPORT_CUES.test(text) || (mentioned && !refutes && !mixed);
 
   if (mixed && !refutes && !supports) return 'mixed';
-  if (refutes && supports) return 'mixed';
+  if (refutes && supports) return SUPPORT_CUES.test(text) ? 'mixed' : 'refutes';
   if (refutes) return 'refutes';
   if (supports) return 'supports';
   return 'unclear';
@@ -384,7 +416,7 @@ export function buildFactCheckReport(
     const rating = normalizeWhitespace(source.rating);
     const title = normalizeWhitespace(source.title);
     const snippet = normalizeWhitespace(source.snippet);
-    const stance = rating ? stanceFromRating(rating) : classifyClaimStance(title, snippet);
+    const stance = rating ? stanceFromRating(rating) : classifyClaimStance(title, snippet, claim);
     const result: FactCheckSource = {
       title: title || 'Untitled source',
       url: asString(source.url).trim(),
