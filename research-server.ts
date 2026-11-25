@@ -9091,7 +9091,7 @@ Develop and execute a strategic research networking approach to build valuable c
                   content: [{
                     type: 'text',
                     text: `Found ${articles.length} news articles about "${topic}"\n${formatWindow(newsWindow)}${dropped}\n\n${articles.map((item, index) =>
-                      `${index + 1}. **${item.title}**\n   ${item.snippet || ''}\n   ${item.link}\n   Source: ${item.source} (${item.pubDate})\n`
+                      `${index + 1}. **${item.title}**\n   ${item.snippet || ''}\n   ${item.publisherHome ? `${item.link} (publisher home, article URL unavailable)` : item.link}\n   Source: ${item.source} (${item.pubDate})\n`
                     ).join('\n')}`,
                   }],
                 };
