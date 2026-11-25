@@ -25,6 +25,8 @@ export interface NewsItem {
   source: string;
   sourceUrl?: string;
   pubDate: string;
+  /** True when `link` is only the publisher's home page, not the article. */
+  publisherHome?: boolean;
 }
 
 export interface TechTrendItem {
@@ -366,10 +368,10 @@ export async function googleNewsSearch(
       }
     });
     if (opts.resolveLinks) {
-      const resolved = await Promise.all(articles.map(async article => ({
-        ...article,
-        link: await resolveNewsLink(article.link, article.sourceUrl),
-      })));
+      const resolved = await Promise.all(articles.map(async article => {
+        const { link, publisherHome } = await resolveNewsLinkDetailed(article.link, article.sourceUrl);
+        return { ...article, link, ...(publisherHome && { publisherHome }) };
+      }));
       return resolved;
     }
     return articles;
@@ -384,14 +386,22 @@ export async function googleNewsSearch(
  * than a news.google.com wrapper that renders nothing for an agent.
  */
 export async function resolveNewsLink(link: string, sourceUrl?: string): Promise<string> {
+  return (await resolveNewsLinkDetailed(link, sourceUrl)).link;
+}
+
+/** Like resolveNewsLink, but flags when the result is only the publisher home page. */
+export async function resolveNewsLinkDetailed(
+  link: string,
+  sourceUrl?: string
+): Promise<{ link: string; publisherHome: boolean }> {
   const direct = unwrapUrl(link);
   let hostname = "";
   try {
     hostname = new URL(direct).hostname;
   } catch {
-    return direct;
+    return { link: direct, publisherHome: false };
   }
-  if (!/(^|\.)news\.google\.com$/i.test(hostname)) return direct;
+  if (!/(^|\.)news\.google\.com$/i.test(hostname)) return { link: direct, publisherHome: false };
   try {
     const res = await axios.get<string>(direct, {
       headers: { "User-Agent": UA },
@@ -401,11 +411,28 @@ export async function resolveNewsLink(link: string, sourceUrl?: string): Promise
       validateStatus: () => true,
     });
     const finalUrl = res.request?.res?.responseUrl || res.config?.url || "";
-    if (finalUrl && !/news\.google\.com/i.test(finalUrl)) return finalUrl;
+    if (finalUrl && !/news\.google\.com/i.test(finalUrl)) return { link: finalUrl, publisherHome: false };
   } catch {
     // fall through to the publisher home
   }
-  return sourceUrl && /^https?:\/\//.test(sourceUrl) ? sourceUrl : direct;
+  return sourceUrl && /^https?:\/\//.test(sourceUrl)
+    ? { link: sourceUrl, publisherHome: true }
+    : { link: direct, publisherHome: false };
+}
+
+export const PUBLISHER_HOME_NOTE = "publisher home, article URL unavailable";
+
+/** Shape news articles as search items, marking links that are only the publisher home. */
+export function newsAsSearchItems(articles: NewsItem[]) {
+  return articles.map((article) => ({
+    title: article.title,
+    link: article.link,
+    snippet: article.publisherHome
+      ? `(${PUBLISHER_HOME_NOTE}) ${article.snippet ?? ""}`.trim()
+      : article.snippet,
+    publishedAt: new Date(article.pubDate).toISOString().slice(0, 10),
+    ...(article.publisherHome && { publisherHome: true }),
+  }));
 }
 
 /**

@@ -136,6 +136,56 @@ describe('content_deduplication canonical URLs and mergedFrom', () => {
 });
 
 describe('fact_checker stances and verdict', () => {
+  const claim = 'HeLa cells were taken from Henrietta Lacks without her knowledge in 1951';
+
+  test('says supports when a snippet states the claim', () => {
+    expect(
+      classifyClaimStance('Henrietta Lacks', 'Her cells were taken without her or her family\'s knowledge in 1951.', claim),
+    ).toBe('supports');
+  });
+
+  test('says refutes when a snippet denies the claim', () => {
+    expect(
+      classifyClaimStance('Henrietta Lacks', 'It is false that her HeLa cells were taken without her knowledge; she consented.', claim),
+    ).toBe('refutes');
+  });
+
+  test('stays unclear when the claim is not mentioned, even with denial wording', () => {
+    expect(classifyClaimStance('Cell culture basics', 'Cultured cells are not immortal in general.', claim)).toBe('unclear');
+  });
+
+  test('stays unclear when a snippet only discusses the claim', () => {
+    expect(
+      classifyClaimStance(
+        'Henrietta Lacks',
+        'Historians debate whether HeLa cells were taken from Henrietta Lacks without her knowledge in 1951.',
+        claim,
+      ),
+    ).toBe('unclear');
+    expect(
+      classifyClaimStance('Henrietta Lacks', 'Were HeLa cells taken without her knowledge in 1951? Henrietta Lacks story', claim),
+    ).toBe('unclear');
+  });
+
+  test('stays unclear when the claim terms appear without assertion wording', () => {
+    expect(classifyClaimStance('HeLa cells Henrietta Lacks 1951 knowledge taken', 'Documentary trailer', claim)).toBe('unclear');
+  });
+
+  test('supports needs the claim terms plus assertion wording', () => {
+    expect(
+      classifyClaimStance('Henrietta Lacks', 'Researchers confirmed HeLa cells were taken without her knowledge in 1951.', claim),
+    ).toBe('supports');
+  });
+
+  test('verdict follows the stances without overreaching', () => {
+    const report = buildFactCheckReport(claim, [
+      { title: 'Henrietta Lacks', url: 'https://a.example', snippet: 'HeLa cells were taken without her knowledge.' },
+      { title: 'Cell culture', url: 'https://b.example', snippet: 'Unrelated page about incubators.' },
+    ]);
+    expect(report.counts).toEqual({ supports: 1, refutes: 0, mixed: 0, unclear: 1 });
+    expect(report.verdict).toBe('supported');
+  });
+
   test('classifies a snippet that refutes a myth restated in its title', () => {
     const stance = classifyClaimStance(
       'Vitamin C cures cancer',

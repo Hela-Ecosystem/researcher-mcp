@@ -19,6 +19,7 @@ import {
   freeExtract,
   arxivSearch,
   googleNewsSearch,
+  newsAsSearchItems,
   hackerNewsSearch,
   decodeEntities,
   unwrapUrl,
@@ -1193,16 +1194,8 @@ export default class ResearchMCPServer {
         const q = String(params?.q || '');
         const num = Number(params?.num || 10);
         if (window) {
-          const articles = await googleNewsSearch(q, { maxResults: num, window });
-          return {
-            provider: 'news',
-            items: articles.map(article => ({
-              title: article.title,
-              link: article.sourceUrl || article.link,
-              snippet: article.snippet,
-              publishedAt: new Date(article.pubDate).toISOString().slice(0, 10),
-            })),
-          };
+          const articles = await googleNewsSearch(q, { maxResults: num, window, resolveLinks: true });
+          return { provider: 'news', items: newsAsSearchItems(articles) };
         }
         const freeRes = await freeSearch(q, { maxResults: num });
         const items = freeRes.items.map((item) => {
@@ -1545,6 +1538,7 @@ export default class ResearchMCPServer {
   }
 
   private formatCsvCell(value: unknown, alwaysQuote = false): string {
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
     const text = String(value ?? '');
     // Guard formula leading characters only on strings: a numeric -5 is a number, not
     // a formula, and prefixing it would silently turn it into text.
@@ -1568,7 +1562,7 @@ export default class ResearchMCPServer {
           throw new Error('CSV rows must be objects or arrays');
         }
 
-        const headers = Object.keys(rows[0]);
+        const headers = [...new Set(rows.flatMap(row => Object.keys(row)))];
         const csvRows = [
           headers.map(header => this.formatCsvCell(header)).join(','),
           ...rows.map(row => headers.map(header => {
@@ -9091,7 +9085,7 @@ Develop and execute a strategic research networking approach to build valuable c
                   content: [{
                     type: 'text',
                     text: `Found ${articles.length} news articles about "${topic}"\n${formatWindow(newsWindow)}${dropped}\n\n${articles.map((item, index) =>
-                      `${index + 1}. **${item.title}**\n   ${item.snippet || ''}\n   ${item.link}\n   Source: ${item.source} (${item.pubDate})\n`
+                      `${index + 1}. **${item.title}**\n   ${item.snippet || ''}\n   ${item.publisherHome ? `${item.link} (publisher home, article URL unavailable)` : item.link}\n   Source: ${item.source} (${item.pubDate})\n`
                     ).join('\n')}`,
                   }],
                 };
@@ -9240,7 +9234,7 @@ Develop and execute a strategic research networking approach to build valuable c
                   text: `Fact-check analysis for: "${claim}"\n` +
                     `Overall verdict: ${report.verdict} (${report.counts.supports} supports, ` +
                     `${report.counts.refutes} refutes, ${report.counts.mixed} mixed, ${report.counts.unclear} unclear)\n` +
-                    `${usedClaimReview ? 'Ratings from Google ClaimReview.' : 'Stances inferred from source wording; treat them as signals, not publisher ratings.'}\n\n` +
+                    `${usedClaimReview ? 'Ratings from Google ClaimReview.' : 'Stances inferred from source wording (a source that restates the claim without denial counts as supports; one that never mentions it is unclear); treat them as signals, not publisher ratings.'}\n\n` +
                     sourceLines,
                 }],
               };

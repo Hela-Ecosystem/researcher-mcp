@@ -46,12 +46,20 @@ describe('data_export MCP contract', () => {
 
   test('does not turn numeric negatives into text', async () => {
     const rows = [{ delta: -5, label: '-5%' }];
-    await expectExport(rows, 'csv', 'delta,label\n"-5","\'-5%"');
+    await expectExport(rows, 'csv', 'delta,label\n-5,"\'-5%"');
   });
 
   test('exports wrapped rows and preserves falsy cell values', async () => {
     const data = { rows: [{ title: 'Paper', count: 0, reviewed: false }, { title: 'Second', count: null }] };
-    await expectExport(data, 'csv', 'title,count,reviewed\n"Paper","0","false"\n"Second","",""');
+    await expectExport(data, 'csv', 'title,count,reviewed\n"Paper",0,"false"\n"Second","",""');
+  });
+
+  test('keeps input column order and leaves plain numbers unquoted', async () => {
+    await expectExport([{ b: 1, a: 2.5, name: 'x' }], 'csv', 'b,a,name\n1,2.5,"x"');
+  });
+
+  test('includes columns that only later rows have, in first-seen order', async () => {
+    await expectExport([{ b: 1 }, { b: 2, a: 3 }], 'csv', 'b,a\n1,""\n2,3');
   });
 
   test('preserves non-CSV serialization', async () => {
